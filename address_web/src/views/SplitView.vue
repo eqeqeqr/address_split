@@ -79,8 +79,8 @@
               <strong>{{ progress.percent }}%</strong>
             </div>
           </div>
-          <p class="progress-main">已处理 {{ progress.summary.processed }}</p>
-          <p class="progress-sub">耗时 {{ progress.summary.elapsed }}</p>
+          <p class="progress-main">{{ progress.summary.processed }}</p>
+          <p class="progress-sub">{{ progress.summary.elapsed }}</p>
 
           <div class="progress-steps">
             <div v-for="step in progress.steps" :key="step.key" class="progress-step">
@@ -127,8 +127,8 @@
               <strong>{{ progress.percent }}%</strong>
             </div>
           </div>
-          <p class="progress-main">已处理 {{ progress.summary.processed }}</p>
-          <p class="progress-sub">耗时 {{ progress.summary.elapsed }}</p>
+          <p class="progress-main">{{ progress.summary.processed }}</p>
+          <p class="progress-sub">{{ progress.summary.elapsed }}</p>
 
           <div class="progress-steps">
             <div v-for="step in progress.steps" :key="step.key" class="progress-step">
@@ -233,7 +233,6 @@ import {
   getColumnSettings,
   getManualInputSeed,
   getSplitPreview,
-  getSplitProgress,
   inspectExcelFile,
   submitManualAddress,
   uploadAddressFile,
@@ -276,11 +275,21 @@ const splitCountError = ref('')
 const columnMode = ref<ColumnMode>('level8')
 const sceneField = ref('level_7')
 const columnSettings = ref<ColumnSettingItem[]>(structuredClone(settingsByMode.level8))
-const progress = ref({
+const createIdleProgress = () => ({
   percent: 0,
-  summary: { processed: '0 / 0 条', elapsed: '00:00:00' },
-  steps: [] as ProgressStep[],
+  summary: {
+    processed: '当前未开始拆分',
+    elapsed: '上传文件或输入地址后，点击开始拆分',
+  },
+  steps: [
+    { key: 'parse', label: '文件解析', status: 'waiting', text: '未开始' },
+    { key: 'split', label: '地址识别与拆分', status: 'waiting', text: '未开始' },
+    { key: 'summary', label: '结果汇总', status: 'waiting', text: '未开始' },
+    { key: 'done', label: '完成', status: 'waiting', text: '未开始' },
+  ] as ProgressStep[],
 })
+
+const progress = ref(createIdleProgress())
 const SPLIT_STATE_KEY = 'address-split-current-state'
 let progressTimer: number | undefined
 let progressStartedAt = 0
@@ -402,8 +411,8 @@ const setProgress = (
   progress.value = {
     percent: Math.round((safeProcessed / safeTotal) * 100),
     summary: {
-      processed: `${safeProcessed.toLocaleString()} / ${safeTotal.toLocaleString()} 条`,
-      elapsed: formatDuration(elapsedSeconds ?? Math.floor((Date.now() - progressStartedAt) / 1000)),
+      processed: `已处理 ${safeProcessed.toLocaleString()} / ${safeTotal.toLocaleString()} 条`,
+      elapsed: `耗时 ${formatDuration(elapsedSeconds ?? Math.floor((Date.now() - progressStartedAt) / 1000))}`,
     },
     steps: [
       { key: 'parse', label: '文件解析', status: safeProcessed > 0 || splitDone ? 'done' : 'doing', text: safeProcessed > 0 || splitDone ? '已完成' : '处理中' },
@@ -438,10 +447,21 @@ const restoreSplitState = () => {
 
   try {
     const payload = JSON.parse(raw)
+    const hasRealResult =
+      Boolean(payload.downloadUrl) ||
+      Boolean(payload.jobSummary) ||
+      (Array.isArray(payload.previewRows) && payload.previewRows.length > 0)
+    const isOldMockProgress =
+      payload.progress?.percent === 68 &&
+      payload.progress?.summary?.processed === '6,800 / 10,000 条'
+    if (isOldMockProgress && !hasRealResult) {
+      sessionStorage.removeItem(SPLIT_STATE_KEY)
+      return
+    }
     activeTab.value = payload.activeTab ?? activeTab.value
     columnMode.value = payload.columnMode ?? columnMode.value
     sceneField.value = payload.sceneField ?? sceneField.value
-    progress.value = payload.progress ?? progress.value
+    progress.value = payload.progress ?? createIdleProgress()
     jobSummary.value = payload.jobSummary ?? ''
     downloadUrl.value = payload.downloadUrl ?? ''
     resultColumns.value = Array.isArray(payload.resultColumns) ? payload.resultColumns : []
@@ -647,15 +667,14 @@ const syncColumnMode = async (mode: ColumnMode) => {
 watch(columnMode, syncColumnMode)
 
 onMounted(async () => {
-  const [seed, rows, progressResult] = await Promise.all([
+  const [seed, rows] = await Promise.all([
     getManualInputSeed(),
     getSplitPreview(),
-    getSplitProgress(),
   ])
 
   manualInput.value = seed
   previewRows.value = rows.slice(0, 3)
-  progress.value = progressResult
+  progress.value = createIdleProgress()
   isRestoringSplitState = true
   activeTab.value = route.query.tab === 'manual' ? 'manual' : 'upload'
   columnMode.value = route.query.columns === 'raw' ? 'raw' : route.query.columns === 'level11' ? 'level11' : 'level8'

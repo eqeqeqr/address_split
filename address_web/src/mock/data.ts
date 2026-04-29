@@ -56,21 +56,15 @@ export const levelFieldDescriptions = [
 export const sceneFieldOptionsByMode: Record<ColumnMode, SelectOption[]> = {
   level8: [
     { label: '7：建筑物/小区/自然村（默认）', value: 'level_7' },
-    { label: '8：楼栋号', value: 'level_8' },
   ],
   level11: [
     { label: '7：建筑物/小区/自然村（默认）', value: 'level_7' },
-    { label: '8：楼栋号', value: 'level_8' },
-    { label: '9：单元', value: 'level_9' },
-    { label: '10：楼层', value: 'level_10' },
-    { label: '11：户室号/村内户号', value: 'level_11' },
   ],
   raw: [
     { label: 'poi：兴趣点（推荐）', value: 'poi' },
     { label: 'subpoi：子兴趣点（推荐）', value: 'subpoi' },
-    { label: 'community：社区/行政村/自然村', value: 'community' },
-    { label: 'houseno：楼栋号/农村门牌号', value: 'houseno' },
-    { label: 'detail：未明确层级的详细地址', value: 'detail' },
+    { label: 'redundant：冗余描述', value: 'redundant' },
+    { label: 'others：其他字段', value: 'others' },
   ],
 }
 

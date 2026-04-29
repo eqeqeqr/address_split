@@ -1,7 +1,7 @@
 from enum import StrEnum
 from typing import Any
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 
 class ColumnMode(StrEnum):
@@ -112,6 +112,21 @@ class SceneRulePayload(BaseModel):
     pattern: str = Field(min_length=1)
     matchField: str = "level_7 / poi"
     priority: int = Field(ge=1)
+
+    @field_validator("matchField")
+    @classmethod
+    def validate_match_field(cls, value: str) -> str:
+        raw_fields = {"poi", "subpoi", "redundant", "others"}
+        normalized = value.strip()
+        if normalized == "level_7":
+            return "level_7 / poi"
+        if normalized in raw_fields:
+            return f"level_7 / {normalized}"
+        if normalized.startswith("level_7 / "):
+            raw_field = normalized.split("/", 1)[1].strip()
+            if raw_field in raw_fields:
+                return f"level_7 / {raw_field}"
+        raise ValueError("识别字段必须包含 level_7，并选择 poi、subpoi、redundant、others 之一作为原始字段")
 
 
 class RedisConfigPayload(BaseModel):

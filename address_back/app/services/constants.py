@@ -48,7 +48,7 @@ DEFAULT_SCENE_FIELDS = {
 }
 
 SCENE_FIELD_OPTIONS = {
-    ColumnMode.level8: ["level_7", "level_8"],
-    ColumnMode.level11: ["level_7", "level_8", "level_9", "level_10", "level_11"],
-    ColumnMode.raw: ["poi", "subpoi", "community", "houseno", "detail"],
+    ColumnMode.level8: ["level_7"],
+    ColumnMode.level11: ["level_7"],
+    ColumnMode.raw: ["poi", "subpoi", "redundant", "others"],
 }

@@ -79,10 +79,13 @@
       <PaginationBar
         :total-text="`${formatNumber(totalRows)} 条`"
         :page-size-text="`${pageSize}条/页`"
+        :page-size="pageSize"
+        :page-size-options="pageSizeOptions"
         :pages="pageButtons"
         :active-page="page"
         :tail-page="totalPages"
         @change="changePage"
+        @page-size-change="changePageSize"
       />
     </section>
 
@@ -139,7 +142,8 @@ const columnSettings = ref<ColumnSettingItem[]>([])
 const resultColumns = ref<string[]>([])
 const downloadUrl = ref('')
 const page = ref(1)
-const pageSize = ref(200)
+const pageSize = ref(20)
+const pageSizeOptions = [20, 50, 100]
 const totalRows = ref(0)
 
 const statCards = computed(() => [
@@ -152,8 +156,10 @@ const statCards = computed(() => [
 const totalPages = computed(() => Math.max(1, Math.ceil(totalRows.value / pageSize.value)))
 
 const pageButtons = computed(() => {
-  const max = Math.min(totalPages.value, 5)
-  return Array.from({ length: max }, (_, index) => index + 1)
+  const visibleCount = Math.min(totalPages.value, 5)
+  const half = Math.floor(visibleCount / 2)
+  const start = Math.max(1, Math.min(page.value - half, totalPages.value - visibleCount + 1))
+  return Array.from({ length: visibleCount }, (_, index) => start + index)
 })
 
 const tableColumns = computed<TableColumn[]>(() => {
@@ -270,6 +276,16 @@ const changePage = async (nextPage: number) => {
   }
 
   page.value = nextPage
+  await loadDetail()
+}
+
+const changePageSize = async (nextPageSize: number) => {
+  if (!pageSizeOptions.includes(nextPageSize) || nextPageSize === pageSize.value) {
+    return
+  }
+
+  pageSize.value = nextPageSize
+  page.value = 1
   await loadDetail()
 }
 

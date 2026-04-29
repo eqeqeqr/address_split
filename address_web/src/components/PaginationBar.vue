@@ -2,13 +2,22 @@
   <div class="pagination">
     <div class="toolbar">
       <span class="field-label">共 {{ totalText }}</span>
-      <select class="select" style="width: 120px">
-        <option>{{ pageSizeText }}</option>
+      <select
+        class="select"
+        style="width: 120px"
+        :value="pageSize"
+        :disabled="!pageSizeOptions?.length"
+        @change="handlePageSizeChange"
+      >
+        <option v-if="!pageSizeOptions?.length">{{ pageSizeText }}</option>
+        <option v-for="size in pageSizeOptions" v-else :key="size" :value="size">{{ size }}条/页</option>
       </select>
     </div>
 
     <div class="pagination-controls">
-      <button type="button" class="page-arrow">〈</button>
+      <button type="button" class="page-arrow" :disabled="activePage <= 1" @click="$emit('change', activePage - 1)">
+        〈
+      </button>
       <button
         v-for="page in pages"
         :key="page"
@@ -19,25 +28,41 @@
       >
         {{ page }}
       </button>
-      <span v-if="tailPage > pages.length" class="muted">...</span>
-      <button v-if="tailPage > pages.length" type="button" class="page-chip" @click="$emit('change', tailPage)">
+      <span v-if="showTailPage" class="muted">...</span>
+      <button v-if="showTailPage" type="button" class="page-chip" @click="$emit('change', tailPage)">
         {{ tailPage }}
       </button>
-      <button type="button" class="page-arrow" @click="$emit('change', activePage + 1)">〉</button>
+      <button type="button" class="page-arrow" :disabled="activePage >= tailPage" @click="$emit('change', activePage + 1)">
+        〉
+      </button>
     </div>
   </div>
 </template>
 
 <script setup lang="ts">
-defineProps<{
+import { computed } from 'vue'
+
+const props = defineProps<{
   totalText: string
   pageSizeText: string
   pages: number[]
   activePage: number
   tailPage: number
+  pageSize?: number
+  pageSizeOptions?: number[]
 }>()
 
-defineEmits<{
+const emit = defineEmits<{
   (event: 'change', page: number): void
+  (event: 'pageSizeChange', pageSize: number): void
 }>()
+
+const showTailPage = computed(() => props.tailPage > 1 && !props.pages.includes(props.tailPage))
+
+const handlePageSizeChange = (event: Event) => {
+  const value = Number((event.target as HTMLSelectElement).value)
+  if (Number.isFinite(value) && value !== props.pageSize) {
+    emit('pageSizeChange', value)
+  }
+}
 </script>

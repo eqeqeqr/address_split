@@ -163,7 +163,7 @@ SCENES_FILE = DATA_DIR / "scenes.json"
 
 def _default_scene_rules() -> list[SceneRuleResponse]:
     return [
-        SceneRuleResponse(id=item.code, name=item.label, pattern=item.pattern.pattern, matchField="level_7 / poi", priority=index + 1, statusText="系统默认", editable=False)
+        SceneRuleResponse(id=item.code, name=item.label, pattern=item.pattern.pattern, matchField="level_7 / poi", priority=index + 1, statusText="系统默认", editable=True)
         for index, item in enumerate(SCENE_PATTERNS[:-1])
     ]
 
@@ -224,6 +224,12 @@ def _ensure_scene_rows() -> None:
     with get_connection() as conn:
         count = conn.execute("SELECT COUNT(*) AS count FROM scene_rules").fetchone()["count"]
         if count:
+            default_ids = [rule.id for rule in _default_scene_rules()]
+            conn.executemany(
+                "UPDATE scene_rules SET status_text = ?, editable = 1 WHERE id = ?",
+                [("系统默认", rule_id) for rule_id in default_ids],
+            )
+            conn.execute("UPDATE scene_rules SET match_field = ? WHERE match_field = ?", ("level_7 / poi", "level_7"))
             return
 
         if SCENES_FILE.exists():
@@ -258,11 +264,9 @@ def create_scene_rule(payload: SceneRulePayload) -> SceneRuleResponse:
 def update_scene_rule(rule_id: str, payload: SceneRulePayload) -> SceneRuleResponse | None:
     _ensure_scene_rows()
     with get_connection() as conn:
-        row = conn.execute("SELECT editable FROM scene_rules WHERE id = ?", (rule_id,)).fetchone()
+        row = conn.execute("SELECT status_text, editable FROM scene_rules WHERE id = ?", (rule_id,)).fetchone()
         if row is None:
             return None
-        if not bool(row["editable"]):
-            raise ValueError("系统默认规则不可编辑")
 
         updated = SceneRuleResponse(
             id=rule_id,
@@ -270,8 +274,8 @@ def update_scene_rule(rule_id: str, payload: SceneRulePayload) -> SceneRuleRespo
             pattern=payload.pattern,
             matchField=payload.matchField,
             priority=payload.priority,
-            statusText="自定义",
-            editable=True,
+            statusText=row["status_text"] or "自定义",
+            editable=bool(row["editable"]),
         )
         _upsert_scene(conn, updated)
         return updated
@@ -283,11 +287,24 @@ def delete_scene_rule(rule_id: str) -> bool:
         row = conn.execute("SELECT editable FROM scene_rules WHERE id = ?", (rule_id,)).fetchone()
         if row is None:
             return False
-        if not bool(row["editable"]):
-            raise ValueError("系统默认规则不可删除")
 
         conn.execute("DELETE FROM scene_rules WHERE id = ?", (rule_id,))
         return True
+
+
+def reset_default_scene_rules() -> list[SceneRuleResponse]:
+    _ensure_scene_rows()
+    defaults = _default_scene_rules()
+    with get_connection() as conn:
+        existing_ids = {
+            row["id"]
+            for row in conn.execute("SELECT id FROM scene_rules").fetchall()
+        }
+        for rule in defaults:
+            if rule.id not in existing_ids:
+                _upsert_scene(conn, rule)
+
+    return list_scene_rules()
 
 
 def detect_scene(value: str) -> dict[str, str]:

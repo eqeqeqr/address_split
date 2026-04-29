@@ -27,7 +27,7 @@ from app.services.constants import (
     RAW_FIELDS,
     SCENE_FIELD_OPTIONS,
 )
-from app.services.scene_service import create_scene_rule, delete_scene_rule, list_scene_rules, update_scene_rule
+from app.services.scene_service import create_scene_rule, delete_scene_rule, list_scene_rules, reset_default_scene_rules, update_scene_rule
 from app.services.environment_config import get_redis_config, save_redis_config
 from app.services.redis_store import reset_redis_connection, test_connection
 from app.services.split_service import (
@@ -134,6 +134,11 @@ def create_scene(payload: SceneRulePayload) -> SceneRuleResponse:
         return create_scene_rule(payload)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@router.post("/scenes/reset-defaults", response_model=list[SceneRuleResponse])
+def reset_scenes() -> list[SceneRuleResponse]:
+    return reset_default_scene_rules()
 
 
 @router.put("/scenes/{rule_id}", response_model=SceneRuleResponse)

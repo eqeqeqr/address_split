@@ -52,6 +52,9 @@ def save_job(job: SplitJobDetail, rows: list[dict[str, Any]] | None = None) -> N
 
 def get_job(job_id: str) -> SplitJobDetail | None:
     _ensure_ready()
+    if redis_store.redis_available():
+        return redis_store.get_job(job_id)
+
     redis_job = redis_store.get_job(job_id)
     if redis_job:
         return redis_job
@@ -63,6 +66,9 @@ def get_job(job_id: str) -> SplitJobDetail | None:
 
 def list_jobs() -> list[SplitJobDetail]:
     _ensure_ready()
+    if redis_store.redis_available():
+        return redis_store.list_jobs()
+
     redis_jobs = redis_store.list_jobs()
     if redis_jobs:
         return redis_jobs
@@ -74,6 +80,9 @@ def list_jobs() -> list[SplitJobDetail]:
 
 def delete_job(job_id: str) -> SplitJobDetail | None:
     _ensure_ready()
+    if redis_store.redis_available():
+        return redis_store.delete_job(job_id)
+
     job = get_job(job_id)
     if job is None:
         return None

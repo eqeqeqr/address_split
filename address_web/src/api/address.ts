@@ -207,6 +207,8 @@ export const deleteScene = async (id: string) =>
     method: 'DELETE',
   })
 
+export const resetDefaultScenes = async () => requestJson<SceneRule[]>('/scenes/reset-defaults', { method: 'POST' })
+
 const mapRecord = (item: any): SplitRecord => ({
   id: item.id,
   taskName: item.taskName,
@@ -240,7 +242,7 @@ export const getSplitResultDetail = async (
   if (id) {
     const search = new URLSearchParams({
       page: String(params.page ?? 1),
-      page_size: String(params.pageSize ?? 200),
+      page_size: String(params.pageSize ?? 20),
     })
     return requestJson<SplitResultDetailResponse>(`/splits/${id}/result?${search.toString()}`)
   }
@@ -254,7 +256,7 @@ export const getSplitResultDetail = async (
     failedRows: [],
     downloadUrl: '',
     page: 1,
-    pageSize: 200,
+    pageSize: 20,
     totalRows: 0,
   }
 }
