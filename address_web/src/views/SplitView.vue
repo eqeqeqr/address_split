@@ -1,0 +1,970 @@
+<template>
+  <div>
+    <PageHeader
+      title="地址拆分"
+      subtitle="支持上传Excel文件或手动输入地址，拆分为明细地址信息及结果录别"
+    />
+
+    <section class="card section-card split-hero">
+      <TabSwitcher v-model="activeTab" :tabs="splitTabs" compact />
+
+      <div class="schema-panel">
+        <label>
+          <span class="field-label">拆分结果列方案</span>
+          <select v-model="columnMode" class="select">
+            <option v-for="item in columnModes" :key="item.value" :value="item.value">
+              {{ item.label }}
+            </option>
+          </select>
+        </label>
+
+        <label>
+          <span class="field-label">场景识别字段</span>
+          <select v-model="sceneField" class="select">
+            <option v-for="item in sceneFieldOptions" :key="item.value" :value="item.value">
+              {{ item.label }}
+            </option>
+          </select>
+        </label>
+
+        <p class="schema-note">
+          {{ schemaNotice }}
+        </p>
+      </div>
+
+      <div v-if="activeTab === 'upload'" class="upload-grid">
+        <div class="card upload-panel">
+          <input
+            ref="fileInputRef"
+            type="file"
+            accept=".xlsx,.xls"
+            class="file-input"
+            @change="handleFileChange"
+          />
+          <div
+            class="upload-dropzone"
+            @click="fileInputRef?.click()"
+            @dragover.prevent
+            @drop.prevent="handleFileDrop"
+          >
+            <div class="excel-badge">X</div>
+            <h3>点击或拖拽 Excel 文件到此处上传</h3>
+            <p>支持 .xlsx、.xls 格式，默认处理前 100 条，可在开始前调整数量</p>
+          </div>
+
+          <div v-if="selectedFile" class="file-card">
+            <div class="file-meta">
+              <span class="file-check">✓</span>
+              <span>{{ selectedFile.name }}</span>
+            </div>
+            <span class="muted">{{ selectedFileSize }}</span>
+            <button type="button" class="ghost-icon" @click="clearSelectedFile">🗑</button>
+          </div>
+
+          <p v-if="selectedFile" class="empty-note">
+            {{ excelInspectText }}
+          </p>
+          <p class="empty-note">建议文件中包含一列地址数据，表头名称为：address/地址</p>
+          <p v-if="errorMessage" class="error-note">{{ errorMessage }}</p>
+
+          <button type="button" class="primary-button" :disabled="isProcessing || isInspectingExcel" @click="openSplitConfirm">
+            ▶ {{ isProcessing ? '拆分中...' : '开始拆分' }}
+          </button>
+        </div>
+
+        <div class="card progress-panel">
+          <h3>拆分进度</h3>
+          <div class="progress-ring" :style="{ '--percent': String(progress.percent) }">
+            <div class="progress-ring-inner">
+              <strong>{{ progress.percent }}%</strong>
+            </div>
+          </div>
+          <p class="progress-main">已处理 {{ progress.summary.processed }}</p>
+          <p class="progress-sub">耗时 {{ progress.summary.elapsed }}</p>
+
+          <div class="progress-steps">
+            <div v-for="step in progress.steps" :key="step.key" class="progress-step">
+              <div class="step-left">
+                <span class="step-dot" :class="step.status" />
+                <span>{{ step.label }}</span>
+              </div>
+              <span
+                class="step-status"
+                :class="step.status === 'doing' ? 'is-doing' : step.status === 'done' ? 'is-done' : ''"
+              >
+                {{ step.text }}
+              </span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div v-else class="manual-grid">
+        <div class="manual-panel">
+          <label class="field-label">请输入地址（每行一个地址）</label>
+          <textarea
+            v-model="manualInput"
+            class="textarea"
+            placeholder="请输入待拆分地址"
+          />
+          <div class="manual-foot">
+            <span class="muted">已输入 {{ manualCount }} 行</span>
+            <span class="muted">{{ manualCount }} 行地址</span>
+          </div>
+          <div class="manual-actions">
+            <button type="button" class="ghost-button" @click="manualInput = ''">清空</button>
+            <button type="button" class="primary-button" :disabled="isProcessing" @click="openSplitConfirm">
+              ▶ {{ isProcessing ? '拆分中...' : '开始拆分' }}
+            </button>
+          </div>
+          <p v-if="errorMessage" class="error-note">{{ errorMessage }}</p>
+        </div>
+
+        <div class="card progress-panel">
+          <h3>拆分进度</h3>
+          <div class="progress-ring" :style="{ '--percent': String(progress.percent) }">
+            <div class="progress-ring-inner">
+              <strong>{{ progress.percent }}%</strong>
+            </div>
+          </div>
+          <p class="progress-main">已处理 {{ progress.summary.processed }}</p>
+          <p class="progress-sub">耗时 {{ progress.summary.elapsed }}</p>
+
+          <div class="progress-steps">
+            <div v-for="step in progress.steps" :key="step.key" class="progress-step">
+              <div class="step-left">
+                <span class="step-dot" :class="step.status" />
+                <span>{{ step.label }}</span>
+              </div>
+              <span
+                class="step-status"
+                :class="step.status === 'doing' ? 'is-doing' : step.status === 'done' ? 'is-done' : ''"
+              >
+                {{ step.text }}
+              </span>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section class="result-section">
+      <div class="section-heading">
+        <h2>拆分结果</h2>
+        <span>显示前 20 行</span>
+      </div>
+
+      <div class="toolbar result-toolbar">
+        <div class="toolbar-spacer" />
+        <a
+          class="secondary-button"
+          :class="{ disabled: !downloadUrl }"
+          :href="downloadUrl || undefined"
+          target="_blank"
+          rel="noreferrer"
+        >
+          ⇩ 导出Excel
+        </a>
+        <button type="button" class="ghost-button" @click="showColumnModal = true">⚙ 设置列显示</button>
+      </div>
+
+      <p v-if="jobSummary" class="job-summary">{{ jobSummary }}</p>
+
+      <BaseTable :columns="visibleColumns" :rows="previewRows" row-key="id">
+        <template #cell-result="{ row }">
+          <StatusBadge :text="row.result" />
+        </template>
+      </BaseTable>
+    </section>
+
+    <div v-if="showSplitConfirm" class="modal-mask" @click.self="showSplitConfirm = false">
+      <div class="modal-card split-count-modal">
+        <div class="modal-body">
+          <div class="modal-header">
+            <div>
+              <h3>确认拆分条数</h3>
+              <p>默认处理 100 条，可输入 1 到 {{ splitMaxRows.toLocaleString() }} 之间的数量。</p>
+            </div>
+            <button type="button" class="close-button" @click="showSplitConfirm = false">✕</button>
+          </div>
+
+          <label class="split-count-field">
+            <span class="field-label">本次处理条数</span>
+            <input
+              v-model="splitCountInput"
+              class="input"
+              inputmode="numeric"
+              placeholder="100"
+              type="number"
+              min="1"
+              :max="splitMaxRows"
+            />
+            <small>Excel 上传最多可处理该文件地址总量；手动输入最多可处理当前输入行数。</small>
+          </label>
+
+          <p v-if="splitCountError" class="error-note">{{ splitCountError }}</p>
+
+          <div class="modal-footer">
+            <button type="button" class="ghost-button" @click="showSplitConfirm = false">取消</button>
+            <button type="button" class="primary-button" @click="confirmSplitCount">确定并开始</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <ColumnSettingsModal
+      v-if="showColumnModal"
+      v-model="columnSettings"
+      v-model:mode="columnMode"
+      v-model:scene-field="sceneField"
+      :modes="columnModes"
+      :scene-field-options="sceneFieldOptions"
+      @close="showColumnModal = false"
+      @confirm="confirmColumns"
+    />
+  </div>
+</template>
+
+<script setup lang="ts">
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { useRoute } from 'vue-router'
+import {
+  buildDownloadUrl,
+  getColumnSettings,
+  getManualInputSeed,
+  getSplitPreview,
+  getSplitProgress,
+  inspectExcelFile,
+  submitManualAddress,
+  uploadAddressFile,
+  updateVisibleColumns,
+} from '../api/address'
+import type { SplitJobResponse } from '../api/address'
+import BaseTable from '../components/BaseTable.vue'
+import ColumnSettingsModal from '../components/ColumnSettingsModal.vue'
+import PageHeader from '../components/PageHeader.vue'
+import StatusBadge from '../components/StatusBadge.vue'
+import TabSwitcher from '../components/TabSwitcher.vue'
+import {
+  columnModes,
+  columnsByMode,
+  sceneFieldOptionsByMode,
+  settingsByMode,
+  splitTabs,
+} from '../mock/data'
+import type { ColumnMode, ColumnSettingItem, ProgressStep, SplitResultRow, TableColumn } from '../types'
+
+const route = useRoute()
+const activeTab = ref('upload')
+const showColumnModal = ref(false)
+const manualInput = ref('')
+const selectedFile = ref<File | null>(null)
+const fileInputRef = ref<HTMLInputElement | null>(null)
+const isProcessing = ref(false)
+const isInspectingExcel = ref(false)
+const errorMessage = ref('')
+const downloadUrl = ref('')
+const resultColumns = ref<string[]>([])
+const jobSummary = ref('')
+const previewRows = ref<SplitResultRow[]>([])
+const excelAddressRows = ref(0)
+const excelAddressColumn = ref('')
+const showSplitConfirm = ref(false)
+const splitMaxRows = ref(100)
+const splitCountInput = ref('100')
+const splitCountError = ref('')
+const columnMode = ref<ColumnMode>('level8')
+const sceneField = ref('level_7')
+const columnSettings = ref<ColumnSettingItem[]>(structuredClone(settingsByMode.level8))
+const progress = ref({
+  percent: 0,
+  summary: { processed: '0 / 0 条', elapsed: '00:00:00' },
+  steps: [] as ProgressStep[],
+})
+const SPLIT_STATE_KEY = 'address-split-current-state'
+let progressTimer: number | undefined
+let progressStartedAt = 0
+let progressTargetRows = 0
+let progressSummaryStarted = false
+let isRestoringSplitState = false
+
+const manualCount = computed(() =>
+  manualInput.value.split('\n').map((item) => item.trim()).filter(Boolean).length,
+)
+
+const selectedFileSize = computed(() => {
+  if (!selectedFile.value) {
+    return ''
+  }
+
+  const mb = selectedFile.value.size / 1024 / 1024
+  return `${mb.toFixed(2)}MB`
+})
+
+const excelInspectText = computed(() => {
+  if (isInspectingExcel.value) {
+    return '正在检测 Excel 地址总量...'
+  }
+
+  if (excelAddressRows.value > 0) {
+    return `检测到 ${excelAddressColumn.value || 'address/地址'} 地址总量：${excelAddressRows.value.toLocaleString()} 条，开始前可选择处理条数。`
+  }
+
+  return '尚未检测到地址总量，请确认文件包含 address/地址 字段。'
+})
+
+const visibleColumns = computed<TableColumn[]>(() =>
+  getColumnsForDisplay().filter((column) => {
+    if (resultColumns.value.length > 0) {
+      return true
+    }
+
+    if (columnMode.value !== 'raw') {
+      return true
+    }
+
+    return columnSettings.value.find((item) => item.key === column.key)?.visible
+  }),
+)
+
+const sceneFieldOptions = computed(() => sceneFieldOptionsByMode[columnMode.value])
+
+const schemaNotice = computed(() => {
+  if (columnMode.value === 'raw') {
+    return '原始字段自定义可按 PDF 字段任意勾选；场景识别建议选择 poi 或 subpoi。'
+  }
+
+  return '8级和11级走固定接口列，默认使用 level_7：建筑物/小区/自然村 与自定义场景正则匹配。'
+})
+
+const toTableColumn = (key: string): TableColumn => {
+  const localColumn = columnsByMode[columnMode.value].find((column) => column.key === key)
+  if (localColumn) {
+    return localColumn
+  }
+
+  return {
+    key,
+    label: key === 'scene_code' ? '场景编码' : key === 'scene' ? '场景' : key,
+    className: key === 'address' ? 'address-cell' : undefined,
+    width: key === 'address' ? '280px' : undefined,
+  }
+}
+
+const getColumnsForDisplay = () => {
+  if (resultColumns.value.length > 0) {
+    return resultColumns.value.map(toTableColumn)
+  }
+
+  return columnsByMode[columnMode.value]
+}
+
+const mapPreviewRows = (response: SplitJobResponse): SplitResultRow[] =>
+  response.preview.map((row, index) => ({
+    id: `${response.job_id}-${index}`,
+    rawAddress: String(row.address ?? row.rawAddress ?? ''),
+    province: String(row.level_1 ?? row.prov ?? ''),
+    city: String(row.level_2 ?? row.city ?? ''),
+    district: String(row.level_3 ?? row.district ?? ''),
+    street: String(row.level_4 ?? row.town ?? ''),
+    road: String(row.level_5 ?? row.road ?? ''),
+    roadNo: String(row.level_6 ?? row.roadno ?? ''),
+    building: String(row.level_7 ?? row.poi ?? ''),
+    roomNo: String(row.level_8 ?? row.houseno ?? ''),
+    result: '识别完成',
+    ...Object.fromEntries(Object.entries(row).map(([key, value]) => [key, String(value ?? '')])),
+  }))
+
+const selectedRawFields = () =>
+  columnSettings.value
+    .filter((item) => item.visible)
+    .map((item) => item.key)
+    .filter((key) => !['rawAddress', 'address', 'scene', 'scene_code', 'result'].includes(key))
+
+const formatDuration = (totalSeconds: number) => {
+  const hours = Math.floor(totalSeconds / 3600)
+  const minutes = Math.floor((totalSeconds % 3600) / 60)
+  const seconds = totalSeconds % 60
+  return [hours, minutes, seconds].map((item) => String(item).padStart(2, '0')).join(':')
+}
+
+const setProgress = (
+  processed: number,
+  total: number,
+  elapsedSeconds?: number,
+  phase: 'splitting' | 'summary' | 'done' = 'splitting',
+) => {
+  const safeTotal = Math.max(total, 1)
+  const safeProcessed = Math.min(Math.max(processed, 0), safeTotal)
+  const splitDone = safeProcessed >= safeTotal
+  const summaryDoing = phase === 'summary'
+  const done = phase === 'done'
+  progress.value = {
+    percent: Math.round((safeProcessed / safeTotal) * 100),
+    summary: {
+      processed: `${safeProcessed.toLocaleString()} / ${safeTotal.toLocaleString()} 条`,
+      elapsed: formatDuration(elapsedSeconds ?? Math.floor((Date.now() - progressStartedAt) / 1000)),
+    },
+    steps: [
+      { key: 'parse', label: '文件解析', status: safeProcessed > 0 || splitDone ? 'done' : 'doing', text: safeProcessed > 0 || splitDone ? '已完成' : '处理中' },
+      { key: 'split', label: '地址识别与拆分', status: splitDone ? 'done' : 'doing', text: splitDone ? '已完成' : '处理中' },
+      { key: 'summary', label: '结果汇总', status: done ? 'done' : summaryDoing ? 'doing' : 'waiting', text: done ? '已完成' : summaryDoing ? '汇总中' : '等待中' },
+      { key: 'done', label: '完成', status: done ? 'done' : 'waiting', text: done ? '已完成' : '等待中' },
+    ],
+  }
+  persistSplitState()
+}
+
+const persistSplitState = () => {
+  const payload = {
+    activeTab: activeTab.value,
+    columnMode: columnMode.value,
+    sceneField: sceneField.value,
+    progress: progress.value,
+    jobSummary: jobSummary.value,
+    downloadUrl: downloadUrl.value,
+    resultColumns: resultColumns.value,
+    previewRows: previewRows.value,
+    savedAt: Date.now(),
+  }
+  sessionStorage.setItem(SPLIT_STATE_KEY, JSON.stringify(payload))
+}
+
+const restoreSplitState = () => {
+  const raw = sessionStorage.getItem(SPLIT_STATE_KEY)
+  if (!raw) {
+    return
+  }
+
+  try {
+    const payload = JSON.parse(raw)
+    activeTab.value = payload.activeTab ?? activeTab.value
+    columnMode.value = payload.columnMode ?? columnMode.value
+    sceneField.value = payload.sceneField ?? sceneField.value
+    progress.value = payload.progress ?? progress.value
+    jobSummary.value = payload.jobSummary ?? ''
+    downloadUrl.value = payload.downloadUrl ?? ''
+    resultColumns.value = Array.isArray(payload.resultColumns) ? payload.resultColumns : []
+    previewRows.value = Array.isArray(payload.previewRows) ? payload.previewRows : previewRows.value
+  } catch {
+    sessionStorage.removeItem(SPLIT_STATE_KEY)
+  }
+}
+
+const stopProgressTimer = () => {
+  if (progressTimer !== undefined) {
+    window.clearInterval(progressTimer)
+    progressTimer = undefined
+  }
+}
+
+const startProgressTimer = (targetRows: number) => {
+  stopProgressTimer()
+  progressTargetRows = Math.max(targetRows, 1)
+  progressSummaryStarted = false
+  progressStartedAt = Date.now()
+  setProgress(0, progressTargetRows, 0)
+
+  progressTimer = window.setInterval(() => {
+    const elapsed = Math.floor((Date.now() - progressStartedAt) / 1000)
+    const paceSeconds = Math.max(3, Math.min(30, Math.ceil(progressTargetRows / 30)))
+    const rawProcessed = Math.floor(progressTargetRows * Math.min(1, (elapsed + 1) / paceSeconds))
+    const processed = Math.min(progressTargetRows, rawProcessed)
+    if (processed >= progressTargetRows) {
+      progressSummaryStarted = true
+    }
+    setProgress(processed, progressTargetRows, elapsed, progressSummaryStarted ? 'summary' : 'splitting')
+  }, 500)
+}
+
+const applySplitResult = (response: SplitJobResponse) => {
+  stopProgressTimer()
+  const elapsed = Math.floor((Date.now() - progressStartedAt) / 1000)
+  previewRows.value = mapPreviewRows(response)
+  resultColumns.value = response.columns
+  downloadUrl.value = buildDownloadUrl(response.download_url)
+  jobSummary.value = `共 ${response.total_rows.toLocaleString()} 条，当前处理 ${response.processed_rows.toLocaleString()} 条，结果列方案：${response.column_mode}`
+  setProgress(response.processed_rows, Math.max(response.processed_rows, progressTargetRows, 1), elapsed, 'done')
+  persistSplitState()
+}
+
+const openSplitConfirm = async () => {
+  errorMessage.value = ''
+  splitCountError.value = ''
+
+  if (activeTab.value === 'manual') {
+    if (manualCount.value === 0) {
+      errorMessage.value = '请先输入地址'
+      return
+    }
+    splitMaxRows.value = manualCount.value
+  } else {
+    if (!selectedFile.value) {
+      errorMessage.value = '请先选择 Excel 文件'
+      return
+    }
+    if (isInspectingExcel.value) {
+      errorMessage.value = '正在检测 Excel 地址总量，请稍后再开始'
+      return
+    }
+    if (excelAddressRows.value <= 0) {
+      await inspectSelectedFile(selectedFile.value)
+    }
+    if (excelAddressRows.value <= 0) {
+      errorMessage.value = '未检测到可处理的 address/地址 地址数据'
+      return
+    }
+    splitMaxRows.value = excelAddressRows.value
+  }
+
+  splitCountInput.value = String(Math.min(100, splitMaxRows.value))
+  showSplitConfirm.value = true
+}
+
+const confirmSplitCount = () => {
+  const value = Number(splitCountInput.value)
+  if (!Number.isInteger(value)) {
+    splitCountError.value = '请输入整数条数'
+    return
+  }
+  if (value < 1) {
+    splitCountError.value = '处理条数不能小于 1'
+    return
+  }
+  if (value > splitMaxRows.value) {
+    splitCountError.value = `处理条数不能大于最大数量 ${splitMaxRows.value.toLocaleString()}`
+    return
+  }
+
+  showSplitConfirm.value = false
+  void startSplit(value)
+}
+
+const startSplit = async (sampleSize: number) => {
+  errorMessage.value = ''
+  isProcessing.value = true
+  startProgressTimer(sampleSize)
+
+  try {
+    if (activeTab.value === 'manual') {
+      const response = await submitManualAddress({
+        content: manualInput.value,
+        columnMode: columnMode.value,
+        sceneField: sceneField.value,
+        rawFields: selectedRawFields(),
+        sampleSize,
+      })
+      applySplitResult(response)
+      return
+    }
+
+    if (!selectedFile.value) {
+      throw new Error('请先选择 Excel 文件')
+    }
+
+    const response = await uploadAddressFile(selectedFile.value, {
+      columnMode: columnMode.value,
+      sceneField: sceneField.value,
+      sampleSize,
+      rawFields: selectedRawFields(),
+    })
+    applySplitResult(response)
+  } catch (error) {
+    stopProgressTimer()
+    errorMessage.value = error instanceof Error ? error.message : '拆分失败，请稍后重试'
+  } finally {
+    isProcessing.value = false
+  }
+}
+
+const inspectSelectedFile = async (file: File) => {
+  isInspectingExcel.value = true
+  excelAddressRows.value = 0
+  try {
+    const result = await inspectExcelFile(file)
+    if (selectedFile.value === file) {
+      excelAddressRows.value = result.address_rows || result.total_rows
+      excelAddressColumn.value = result.address_column
+    }
+  } catch (error) {
+    if (selectedFile.value === file) {
+      errorMessage.value = error instanceof Error ? error.message : 'Excel 地址总量检测失败'
+    }
+  } finally {
+    if (selectedFile.value === file) {
+      isInspectingExcel.value = false
+    }
+  }
+}
+
+const setSelectedFile = (file: File | null) => {
+  selectedFile.value = file
+  excelAddressRows.value = 0
+  excelAddressColumn.value = ''
+  errorMessage.value = ''
+  if (file) {
+    void inspectSelectedFile(file)
+  }
+}
+
+const clearSelectedFile = () => {
+  setSelectedFile(null)
+  if (fileInputRef.value) {
+    fileInputRef.value.value = ''
+  }
+}
+
+const handleFileChange = (event: Event) => {
+  const input = event.target as HTMLInputElement
+  setSelectedFile(input.files?.[0] ?? null)
+}
+
+const handleFileDrop = (event: DragEvent) => {
+  setSelectedFile(event.dataTransfer?.files?.[0] ?? null)
+}
+
+const confirmColumns = async () => {
+  const result = await updateVisibleColumns({
+    mode: columnMode.value,
+    columns: columnSettings.value,
+    sceneField: sceneField.value,
+  })
+  columnSettings.value = result.columns
+  showColumnModal.value = false
+}
+
+const syncColumnMode = async (mode: ColumnMode) => {
+  columnSettings.value = await getColumnSettings(mode)
+  sceneField.value = sceneFieldOptionsByMode[mode][0]?.value ?? ''
+  if (!isRestoringSplitState) {
+    resultColumns.value = []
+    downloadUrl.value = ''
+    jobSummary.value = ''
+    persistSplitState()
+  }
+}
+
+watch(columnMode, syncColumnMode)
+
+onMounted(async () => {
+  const [seed, rows, progressResult] = await Promise.all([
+    getManualInputSeed(),
+    getSplitPreview(),
+    getSplitProgress(),
+  ])
+
+  manualInput.value = seed
+  previewRows.value = rows.slice(0, 3)
+  progress.value = progressResult
+  isRestoringSplitState = true
+  activeTab.value = route.query.tab === 'manual' ? 'manual' : 'upload'
+  columnMode.value = route.query.columns === 'raw' ? 'raw' : route.query.columns === 'level11' ? 'level11' : 'level8'
+  showColumnModal.value = route.query.modal === 'columns'
+  restoreSplitState()
+  window.setTimeout(() => {
+    isRestoringSplitState = false
+  }, 0)
+})
+
+onBeforeUnmount(stopProgressTimer)
+</script>
+
+<style scoped>
+.split-hero {
+  padding-top: 16px;
+}
+
+.schema-panel {
+  display: grid;
+  grid-template-columns: 230px 300px 1fr;
+  gap: 16px;
+  align-items: end;
+  margin-top: 22px;
+  padding: 16px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: #f8fbff;
+}
+
+.schema-panel label {
+  display: grid;
+  gap: 8px;
+}
+
+.schema-note {
+  margin: 0;
+  color: #64748b;
+  font-size: 14px;
+}
+
+.upload-grid,
+.manual-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1.08fr) minmax(320px, 0.92fr);
+  gap: 22px;
+  padding-top: 22px;
+}
+
+.upload-panel,
+.progress-panel,
+.manual-panel {
+  padding: 24px;
+  border-radius: 16px;
+  border: 1px solid var(--border);
+  background: #fff;
+}
+
+.upload-dropzone {
+  min-height: 252px;
+  border: 1px dashed #c4dbff;
+  border-radius: 14px;
+  background: linear-gradient(180deg, #fbfdff 0%, #f6faff 100%);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  cursor: pointer;
+}
+
+.file-input {
+  display: none;
+}
+
+.excel-badge {
+  width: 64px;
+  height: 64px;
+  border-radius: 18px;
+  background: linear-gradient(180deg, #22c55e 0%, #16a34a 100%);
+  color: #fff;
+  font-size: 34px;
+  font-weight: 800;
+  display: grid;
+  place-items: center;
+}
+
+.upload-dropzone h3 {
+  margin: 18px 0 8px;
+  font-size: 22px;
+}
+
+.upload-dropzone p {
+  margin: 0;
+  color: var(--text-sub);
+}
+
+.file-card {
+  display: grid;
+  grid-template-columns: 1fr auto auto;
+  gap: 16px;
+  align-items: center;
+  margin-top: 18px;
+  padding: 18px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+}
+
+.file-meta {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  font-weight: 600;
+}
+
+.file-check {
+  width: 22px;
+  height: 22px;
+  display: inline-grid;
+  place-items: center;
+  border-radius: 50%;
+  background: rgba(16, 185, 129, 0.14);
+  color: var(--success);
+}
+
+.ghost-icon {
+  color: #475569;
+  cursor: pointer;
+}
+
+.error-note {
+  margin: 12px 0 0;
+  color: var(--danger);
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.progress-panel h3 {
+  margin: 0 0 18px;
+  font-size: 18px;
+}
+
+.progress-ring {
+  width: 148px;
+  height: 148px;
+  margin: 10px auto 16px;
+  border-radius: 50%;
+  background: conic-gradient(var(--primary) calc(var(--percent) * 1%), #d9e8ff 0);
+  display: grid;
+  place-items: center;
+  --percent: 68;
+}
+
+.progress-ring-inner {
+  width: 110px;
+  height: 110px;
+  border-radius: 50%;
+  background: #fff;
+  display: grid;
+  place-items: center;
+}
+
+.progress-ring-inner strong {
+  color: var(--primary);
+  font-size: 28px;
+}
+
+.progress-main,
+.progress-sub {
+  margin: 0;
+  text-align: center;
+}
+
+.progress-main {
+  color: #0f172a;
+  font-size: 18px;
+  font-weight: 700;
+}
+
+.progress-sub {
+  color: var(--text-sub);
+  margin-top: 8px;
+}
+
+.progress-steps {
+  margin-top: 20px;
+  padding-top: 18px;
+  border-top: 1px solid #edf2f7;
+}
+
+.progress-step,
+.step-left {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.progress-step + .progress-step {
+  margin-top: 14px;
+}
+
+.step-left {
+  justify-content: flex-start;
+}
+
+.step-dot {
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  border: 2px solid #cbd5e1;
+}
+
+.step-dot.done {
+  background: var(--success);
+  border-color: var(--success);
+}
+
+.step-dot.doing {
+  border-color: var(--primary);
+  box-shadow: inset 0 0 0 4px rgba(31, 120, 255, 0.8);
+  animation: progress-pulse 0.9s linear infinite;
+}
+
+.step-status {
+  color: var(--text-muted);
+  font-weight: 600;
+}
+
+.step-status.is-doing {
+  color: var(--primary);
+}
+
+.step-status.is-done {
+  color: var(--success);
+}
+
+@keyframes progress-pulse {
+  0% {
+    transform: scale(0.88);
+    box-shadow: inset 0 0 0 4px rgba(31, 120, 255, 0.75), 0 0 0 0 rgba(31, 120, 255, 0.25);
+  }
+
+  100% {
+    transform: scale(1);
+    box-shadow: inset 0 0 0 4px rgba(31, 120, 255, 0.75), 0 0 0 8px rgba(31, 120, 255, 0);
+  }
+}
+
+.manual-panel {
+  margin-top: 22px;
+}
+
+.manual-grid .manual-panel {
+  margin-top: 0;
+}
+
+.manual-foot,
+.manual-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.manual-foot {
+  margin-top: 12px;
+  padding-bottom: 18px;
+  border-bottom: 1px solid #edf2f7;
+}
+
+.manual-actions {
+  margin-top: 18px;
+}
+
+.result-section {
+  margin-top: 30px;
+}
+
+.result-toolbar {
+  justify-content: flex-end;
+  margin-bottom: 16px;
+}
+
+.job-summary {
+  margin: -6px 0 14px;
+  color: #64748b;
+  font-size: 14px;
+}
+
+.secondary-button.disabled {
+  pointer-events: none;
+  color: #94a3b8;
+  border-color: var(--border);
+  background: #f8fafc;
+}
+
+.split-count-modal {
+  width: min(100%, 460px);
+}
+
+.split-count-field {
+  display: grid;
+  gap: 8px;
+  margin-top: 22px;
+}
+
+.split-count-field small {
+  color: var(--text-muted);
+  font-size: 13px;
+}
+</style>
