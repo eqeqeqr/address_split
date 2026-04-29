@@ -24,6 +24,7 @@ Thumbs.db
 tmp_verify/
 excel/
 pdf/
+原型设计/
 address_back/data/uploads/
 address_back/data/results/
 address_back/data/*.db
