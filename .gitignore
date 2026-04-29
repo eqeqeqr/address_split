@@ -22,6 +22,8 @@ Thumbs.db
 
 # Runtime data
 tmp_verify/
+excel/
+pdf/
 address_back/data/uploads/
 address_back/data/results/
 address_back/data/*.db
