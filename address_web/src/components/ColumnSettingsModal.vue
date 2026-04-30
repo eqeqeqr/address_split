@@ -24,18 +24,6 @@
             </select>
           </label>
 
-          <label class="modal-field">
-            <span class="field-label">场景识别字段</span>
-            <select
-              class="select"
-              :value="sceneField"
-              @change="$emit('update:sceneField', ($event.target as HTMLSelectElement).value)"
-            >
-              <option v-for="item in sceneFieldOptions" :key="item.value" :value="item.value">
-                {{ item.label }}
-              </option>
-            </select>
-          </label>
         </div>
 
         <div class="column-list">
@@ -66,20 +54,17 @@
 </template>
 
 <script setup lang="ts">
-import type { ColumnMode, ColumnSettingItem, SelectOption } from '../types'
+import type { ColumnMode, ColumnSettingItem } from '../types'
 
 const props = defineProps<{
   modelValue: ColumnSettingItem[]
   mode: ColumnMode
   modes: Array<{ label: string; value: ColumnMode; description: string }>
-  sceneField: string
-  sceneFieldOptions: SelectOption[]
 }>()
 
 const emit = defineEmits<{
   (event: 'update:modelValue', value: ColumnSettingItem[]): void
   (event: 'update:mode', value: ColumnMode): void
-  (event: 'update:sceneField', value: string): void
   (event: 'close'): void
   (event: 'confirm'): void
 }>()

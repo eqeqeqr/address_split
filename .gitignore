@@ -28,6 +28,7 @@ pdf/
 address_back/data/uploads/
 address_back/data/results/
 address_back/data/*.db
+address_back/data/*.migrated.json
 
 # Logs and env files
 *.log

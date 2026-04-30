@@ -5,6 +5,11 @@
       subtitle="支持上传Excel文件或手动输入地址，拆分为明细地址信息及结果录别"
     />
 
+    <div v-if="redisStatus && !redisStatus.available" class="redis-warning">
+      <strong>Redis 未连接</strong>
+      <span>{{ redisStatus.message }}</span>
+    </div>
+
     <section class="card section-card split-hero">
       <TabSwitcher v-model="activeTab" :tabs="splitTabs" compact />
 
@@ -13,15 +18,6 @@
           <span class="field-label">拆分结果列方案</span>
           <select v-model="columnMode" class="select">
             <option v-for="item in columnModes" :key="item.value" :value="item.value">
-              {{ item.label }}
-            </option>
-          </select>
-        </label>
-
-        <label>
-          <span class="field-label">场景识别字段</span>
-          <select v-model="sceneField" class="select">
-            <option v-for="item in sceneFieldOptions" :key="item.value" :value="item.value">
               {{ item.label }}
             </option>
           </select>
@@ -222,9 +218,7 @@
       v-if="showColumnModal"
       v-model="columnSettings"
       v-model:mode="columnMode"
-      v-model:scene-field="sceneField"
       :modes="columnModes"
-      :scene-field-options="sceneFieldOptions"
       @close="showColumnModal = false"
       @confirm="confirmColumns"
     />
@@ -241,6 +235,7 @@ import {
   createSplitJobId,
   getColumnSettings,
   getManualInputSeed,
+  getRedisStatus,
   getSplitPreview,
   getSplitResultDetail,
   inspectExcelFile,
@@ -249,6 +244,7 @@ import {
   updateVisibleColumns,
 } from '../api/address'
 import type { SplitJobResponse, SplitProgressEvent } from '../api/address'
+import type { RedisStatusResponse } from '../api/address'
 import BaseTable from '../components/BaseTable.vue'
 import ColumnSettingsModal from '../components/ColumnSettingsModal.vue'
 import PageHeader from '../components/PageHeader.vue'
@@ -257,7 +253,6 @@ import TabSwitcher from '../components/TabSwitcher.vue'
 import {
   columnModes,
   columnsByMode,
-  sceneFieldOptionsByMode,
   settingsByMode,
   splitTabs,
 } from '../mock/data'
@@ -271,6 +266,7 @@ const selectedFile = ref<File | null>(null)
 const fileInputRef = ref<HTMLInputElement | null>(null)
 const isProcessing = ref(false)
 const isCancelling = ref(false)
+const redisStatus = ref<RedisStatusResponse | null>(null)
 const isInspectingExcel = ref(false)
 const errorMessage = ref('')
 const downloadUrl = ref('')
@@ -284,7 +280,6 @@ const splitMaxRows = ref(100)
 const splitCountInput = ref('100')
 const splitCountError = ref('')
 const columnMode = ref<ColumnMode>('level8')
-const sceneField = ref('level_7')
 const columnSettings = ref<ColumnSettingItem[]>(structuredClone(settingsByMode.level8))
 const currentJobId = ref('')
 const createIdleProgress = () => ({
@@ -322,6 +317,21 @@ const selectedFileSize = computed(() => {
   return `${mb.toFixed(2)}MB`
 })
 
+const loadRedisStatus = async () => {
+  try {
+    redisStatus.value = await getRedisStatus()
+  } catch {
+    redisStatus.value = {
+      available: false,
+      mode: 'local',
+      host: '127.0.0.1',
+      port: 6379,
+      db: 0,
+      message: '当前未连接 Redis，系统将使用本地模式运行；如需跨任务缓存和高性能记录查询，请安装或配置 Redis。',
+    }
+  }
+}
+
 const excelInspectText = computed(() => {
   if (isInspectingExcel.value) {
     return '正在检测 Excel 地址总量...'
@@ -349,14 +359,12 @@ const visibleColumns = computed<TableColumn[]>(() =>
   }),
 )
 
-const sceneFieldOptions = computed(() => sceneFieldOptionsByMode[columnMode.value])
-
 const schemaNotice = computed(() => {
   if (columnMode.value === 'raw') {
-    return '原始字段自定义可按 PDF 字段任意勾选；场景识别建议选择 poi 或 subpoi。'
+    return '原始字段自定义可按 PDF 字段任意勾选；场景识别字段由自定义场景规则表逐条控制。'
   }
 
-  return '8级和11级走固定接口列，默认使用 level_7：建筑物/小区/自然村 与自定义场景正则匹配。'
+  return '8级和11级走固定接口列；场景识别字段由自定义场景规则表逐条控制。'
 })
 
 const toTableColumn = (key: string): TableColumn => {
@@ -456,7 +464,6 @@ const persistSplitState = () => {
   const payload = {
     activeTab: activeTab.value,
     columnMode: columnMode.value,
-    sceneField: sceneField.value,
     progress: progress.value,
     jobSummary: jobSummary.value,
     downloadUrl: downloadUrl.value,
@@ -491,7 +498,6 @@ const restoreSplitState = () => {
     }
     activeTab.value = payload.activeTab ?? activeTab.value
     columnMode.value = payload.columnMode ?? columnMode.value
-    sceneField.value = payload.sceneField ?? sceneField.value
     progress.value = payload.progress ?? createIdleProgress()
     jobSummary.value = payload.jobSummary ?? ''
     downloadUrl.value = payload.downloadUrl ?? ''
@@ -681,7 +687,6 @@ const startSplit = async (sampleSize: number) => {
       const response = await submitManualAddress({
         content: manualInput.value,
         columnMode: columnMode.value,
-        sceneField: sceneField.value,
         rawFields: selectedRawFields(),
         sampleSize,
         clientJobId,
@@ -696,7 +701,6 @@ const startSplit = async (sampleSize: number) => {
 
     const response = await uploadAddressFile(selectedFile.value, {
       columnMode: columnMode.value,
-      sceneField: sceneField.value,
       sampleSize,
       rawFields: selectedRawFields(),
       clientJobId,
@@ -762,7 +766,6 @@ const confirmColumns = async () => {
   const result = await updateVisibleColumns({
     mode: columnMode.value,
     columns: columnSettings.value,
-    sceneField: sceneField.value,
   })
   columnSettings.value = result.columns
   showColumnModal.value = false
@@ -770,7 +773,6 @@ const confirmColumns = async () => {
 
 const syncColumnMode = async (mode: ColumnMode) => {
   columnSettings.value = await getColumnSettings(mode)
-  sceneField.value = sceneFieldOptionsByMode[mode][0]?.value ?? ''
   if (!isRestoringSplitState) {
     resultColumns.value = []
     downloadUrl.value = ''
@@ -785,6 +787,7 @@ onMounted(async () => {
   const [seed, rows] = await Promise.all([
     getManualInputSeed(),
     getSplitPreview(),
+    loadRedisStatus(),
   ])
 
   manualInput.value = seed
@@ -813,7 +816,7 @@ onBeforeUnmount(stopProgressTimer)
 
 .schema-panel {
   display: grid;
-  grid-template-columns: 230px 300px 1fr;
+  grid-template-columns: 230px minmax(0, 1fr);
   gap: 16px;
   align-items: end;
   margin-top: 22px;
@@ -928,6 +931,22 @@ onBeforeUnmount(stopProgressTimer)
   color: var(--danger);
   font-size: 14px;
   font-weight: 600;
+}
+
+.redis-warning {
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+  margin-bottom: 16px;
+  padding: 14px 16px;
+  border: 1px solid #fed7aa;
+  border-radius: 14px;
+  color: #9a3412;
+  background: #fff7ed;
+}
+
+.redis-warning strong {
+  flex: none;
 }
 
 .progress-panel h3 {

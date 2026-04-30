@@ -1,7 +1,7 @@
 import json
 from typing import Any
 
-from app.core.config import DATA_DIR
+from app.core.config import DATA_DIR, DB_PATH
 from app.schemas.address import SplitJobDetail
 from app.services.db import get_connection, init_db
 from app.services import redis_store
@@ -9,8 +9,10 @@ from app.services import redis_store
 JOBS_FILE = DATA_DIR / "jobs.json"
 
 
-def _migrate_json_jobs() -> None:
+def _migrate_json_jobs(db_preexisting: bool) -> None:
     if not JOBS_FILE.exists():
+        return
+    if db_preexisting:
         return
 
     with get_connection() as conn:
@@ -32,13 +34,48 @@ def _migrate_json_jobs() -> None:
 
 
 def _ensure_ready() -> None:
+    db_preexisting = DB_PATH.exists()
     init_db()
-    _migrate_json_jobs()
+    _migrate_json_jobs(db_preexisting)
+
+
+def _get_sqlite_job(job_id: str) -> SplitJobDetail | None:
+    with get_connection() as conn:
+        row = conn.execute("SELECT payload FROM split_jobs WHERE job_id = ?", (job_id,)).fetchone()
+        return SplitJobDetail(**json.loads(row["payload"])) if row else None
+
+
+def _list_sqlite_jobs() -> list[SplitJobDetail]:
+    with get_connection() as conn:
+        rows = conn.execute("SELECT payload FROM split_jobs ORDER BY created_at DESC").fetchall()
+        return [SplitJobDetail(**json.loads(row["payload"])) for row in rows]
+
+
+def _delete_sqlite_job(job_id: str) -> SplitJobDetail | None:
+    job = _get_sqlite_job(job_id)
+    if job is None:
+        return None
+
+    with get_connection() as conn:
+        conn.execute("DELETE FROM split_jobs WHERE job_id = ?", (job_id,))
+    return job
 
 
 def save_job(job: SplitJobDetail, rows: list[dict[str, Any]] | None = None) -> None:
     _ensure_ready()
-    redis_store.save_job(job, rows)
+    if redis_store.redis_available():
+        config = redis_store.get_storage_config()
+        job.storage_backend = "redis"
+        job.storage_host = config["host"]
+        job.storage_port = config["port"]
+        job.storage_db = config["db"]
+        redis_store.save_job(job, rows)
+        return
+
+    job.storage_backend = "sqlite"
+    job.storage_host = ""
+    job.storage_port = None
+    job.storage_db = None
     with get_connection() as conn:
         conn.execute(
             "INSERT OR REPLACE INTO split_jobs (job_id, payload, created_at) VALUES (?, ?, ?)",
@@ -53,44 +90,30 @@ def save_job(job: SplitJobDetail, rows: list[dict[str, Any]] | None = None) -> N
 def get_job(job_id: str) -> SplitJobDetail | None:
     _ensure_ready()
     if redis_store.redis_available():
-        return redis_store.get_job(job_id)
+        redis_job = redis_store.get_job(job_id)
+        if redis_job:
+            return redis_job
 
-    redis_job = redis_store.get_job(job_id)
-    if redis_job:
-        return redis_job
-
-    with get_connection() as conn:
-        row = conn.execute("SELECT payload FROM split_jobs WHERE job_id = ?", (job_id,)).fetchone()
-        return SplitJobDetail(**json.loads(row["payload"])) if row else None
+    return _get_sqlite_job(job_id)
 
 
 def list_jobs() -> list[SplitJobDetail]:
     _ensure_ready()
+    sqlite_jobs = _list_sqlite_jobs()
     if redis_store.redis_available():
-        return redis_store.list_jobs()
+        merged: dict[str, SplitJobDetail] = {job.job_id: job for job in sqlite_jobs}
+        for job in redis_store.list_jobs():
+            merged[job.job_id] = job
+        return sorted(merged.values(), key=lambda item: item.created_at, reverse=True)
 
-    redis_jobs = redis_store.list_jobs()
-    if redis_jobs:
-        return redis_jobs
-
-    with get_connection() as conn:
-        rows = conn.execute("SELECT payload FROM split_jobs ORDER BY created_at DESC").fetchall()
-        return [SplitJobDetail(**json.loads(row["payload"])) for row in rows]
+    return sqlite_jobs
 
 
 def delete_job(job_id: str) -> SplitJobDetail | None:
     _ensure_ready()
-    if redis_store.redis_available():
-        return redis_store.delete_job(job_id)
-
-    job = get_job(job_id)
-    if job is None:
-        return None
-
-    redis_store.delete_job(job_id)
-    with get_connection() as conn:
-        conn.execute("DELETE FROM split_jobs WHERE job_id = ?", (job_id,))
-    return job
+    redis_job = redis_store.delete_job(job_id) if redis_store.redis_available() else None
+    sqlite_job = _delete_sqlite_job(job_id)
+    return redis_job or sqlite_job
 
 
 def get_cached_job(cache_key: str) -> SplitJobDetail | None:

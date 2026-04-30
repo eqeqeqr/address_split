@@ -24,15 +24,6 @@
           </select>
         </label>
 
-        <label>
-          <span class="field-label">场景识别字段</span>
-          <select v-model="sceneField" class="select">
-            <option v-for="item in sceneFieldOptions" :key="item.value" :value="item.value">
-              {{ item.label }}
-            </option>
-          </select>
-        </label>
-
         <p class="schema-note">{{ schemaNotice }}</p>
       </div>
 
@@ -92,9 +83,7 @@
       v-if="showColumnModal"
       v-model="columnSettings"
       v-model:mode="columnMode"
-      v-model:scene-field="sceneField"
       :modes="columnModes"
-      :scene-field-options="sceneFieldOptions"
       @close="showColumnModal = false"
       @confirm="saveColumns"
     />
@@ -116,7 +105,6 @@ import {
   detailTabs,
   provinceOptions,
   regionOptions,
-  sceneFieldOptionsByMode,
 } from '../mock/data'
 import type { ColumnMode, ColumnSettingItem, DetailStats, SplitResultRow, TableColumn } from '../types'
 
@@ -128,7 +116,6 @@ const regionFilter = ref('all')
 const provinceFilter = ref('all')
 const keyword = ref('')
 const columnMode = ref<ColumnMode>('level8')
-const sceneField = ref('level_7')
 const stats = ref<DetailStats>({
   total: '0',
   success: '0',
@@ -188,14 +175,12 @@ const tableColumns = computed<TableColumn[]>(() => {
   )
 })
 
-const sceneFieldOptions = computed(() => sceneFieldOptionsByMode[columnMode.value])
-
 const schemaNotice = computed(() => {
   if (columnMode.value === 'raw') {
-    return '原始字段自定义按 PDF 字段展示，场景识别建议选择 poi 或 subpoi。'
+    return '原始字段自定义按 PDF 字段展示；场景识别字段由自定义场景规则表逐条控制。'
   }
 
-  return '固定标准列由接口返回，场景默认按 level_7：建筑物/小区/自然村 匹配。'
+  return '固定标准列由接口返回；场景识别字段由自定义场景规则表逐条控制。'
 })
 
 const activeRows = computed(() => (activeTab.value === 'preview' ? rows.value : failedRows.value))
@@ -221,7 +206,6 @@ const saveColumns = async () => {
   const result = await updateVisibleColumns({
     mode: columnMode.value,
     columns: columnSettings.value,
-    sceneField: sceneField.value,
   })
   columnSettings.value = result.columns
   showColumnModal.value = false
@@ -229,7 +213,6 @@ const saveColumns = async () => {
 
 const syncColumnMode = async (mode: ColumnMode) => {
   columnSettings.value = await getColumnSettings(mode)
-  sceneField.value = sceneFieldOptionsByMode[mode][0]?.value ?? ''
 }
 
 watch(columnMode, syncColumnMode)
@@ -269,7 +252,6 @@ const loadDetail = async () => {
     ...Object.fromEntries(Object.entries(row).map(([key, value]) => [key, String(value ?? '')])),
   }))
   columnMode.value = route.query.columns === 'raw' ? 'raw' : route.query.columns === 'level11' ? 'level11' : detail.columnMode
-  sceneField.value = detail.sceneField
   resultColumns.value = detail.columns
   downloadUrl.value = detail.downloadUrl ? `http://127.0.0.1:8000${detail.downloadUrl}` : ''
   page.value = detail.page
@@ -311,7 +293,7 @@ onMounted(async () => {
 
 .schema-panel {
   display: grid;
-  grid-template-columns: 230px 300px 1fr;
+  grid-template-columns: 230px minmax(0, 1fr);
   gap: 16px;
   align-items: end;
   margin-bottom: 22px;

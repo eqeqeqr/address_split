@@ -14,6 +14,7 @@ from app.schemas.address import (
     ExcelInspectResponse,
     RedisConfigPayload,
     RedisConfigResponse,
+    RedisStatusResponse,
     RedisTestResponse,
     SceneRulePayload,
     SceneRuleResponse,
@@ -31,7 +32,7 @@ from app.services.constants import (
 )
 from app.services.scene_service import create_scene_rule, delete_scene_rule, list_scene_rules, reset_default_scene_rules, update_scene_rule
 from app.services.environment_config import get_redis_config, save_redis_config
-from app.services.redis_store import reset_redis_connection, test_connection
+from app.services.redis_store import get_redis_status, reset_redis_connection, test_connection
 from app.services.split_service import (
     get_cached_job,
     delete_job,
@@ -75,6 +76,12 @@ def _split_scheme(column_mode: ColumnMode, raw_fields: list[str] | None = None) 
     return "原始字段自定义"
 
 
+def _storage_label(job) -> str:
+    if job.storage_backend == "redis":
+        return f"Redis {job.storage_host}:{job.storage_port} DB {job.storage_db}"
+    return "SQLite"
+
+
 def _publish_from_worker(loop: asyncio.AbstractEventLoop, job_id: str):
     def publish(payload: dict) -> None:
         asyncio.run_coroutine_threadsafe(progress_manager.publish(job_id, payload), loop)
@@ -114,9 +121,29 @@ def read_redis_environment() -> RedisConfigResponse:
     return get_redis_config()
 
 
+@router.get("/environment/redis/status", response_model=RedisStatusResponse)
+def read_redis_status() -> RedisStatusResponse:
+    return get_redis_status()
+
+
 @router.put("/environment/redis", response_model=RedisConfigResponse)
 def update_redis_environment(payload: RedisConfigPayload) -> RedisConfigResponse:
     result = save_redis_config(payload)
+    reset_redis_connection()
+    return result
+
+
+@router.post("/environment/redis/disconnect", response_model=RedisConfigResponse)
+def disconnect_redis_environment() -> RedisConfigResponse:
+    result = save_redis_config(
+        RedisConfigPayload(
+            mode="disabled",
+            host="127.0.0.1",
+            port=6379,
+            db=0,
+            password="",
+        )
+    )
     reset_redis_connection()
     return result
 
@@ -299,6 +326,11 @@ def list_splits() -> list[SplitRecordResponse]:
                 splitScheme=_split_scheme(job.column_mode, job.raw_fields),
                 sceneField=job.scene_field,
                 downloadUrl=f"/api/splits/{job.job_id}/download",
+                storageBackend=job.storage_backend,
+                storageHost=job.storage_host,
+                storagePort=job.storage_port,
+                storageDb=job.storage_db,
+                storageLabel=_storage_label(job),
             )
         )
 

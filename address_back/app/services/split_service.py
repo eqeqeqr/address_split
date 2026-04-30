@@ -11,14 +11,12 @@ import pandas as pd
 from app.core.config import DEFAULT_SAMPLE_SIZE, RESULT_DIR
 from app.schemas.address import ColumnMode, SplitJobDetail, SplitJobStatus
 from app.services.constants import (
-    DEFAULT_SCENE_FIELDS,
     LEVEL8_FIELDS,
     LEVEL11_FIELDS,
     RAW_FIELDS,
-    SCENE_FIELD_OPTIONS,
 )
 from app.services.model_service import get_model_service
-from app.services.scene_service import detect_scene
+from app.services.scene_service import detect_scene_by_fields
 from app.services.job_store import delete_job as delete_stored_job
 from app.services.job_store import get_cached_job as get_cached_stored_job
 from app.services.job_store import get_job as get_stored_job
@@ -90,15 +88,6 @@ def _raw_to_levels(raw: dict[str, str]) -> dict[str, str]:
     }
 
 
-def _resolve_scene_field(column_mode: ColumnMode, scene_field: str | None) -> str:
-    default = DEFAULT_SCENE_FIELDS[column_mode]
-    if not scene_field:
-        return default
-    if scene_field not in SCENE_FIELD_OPTIONS[column_mode]:
-        raise ValueError(f"{column_mode} 不支持使用 {scene_field} 作为场景识别字段")
-    return scene_field
-
-
 def _resolve_raw_fields(column_mode: ColumnMode, raw_fields: list[str] | None) -> list[str]:
     if column_mode != ColumnMode.raw:
         return []
@@ -147,7 +136,6 @@ def split_dataframe(
     should_cancel: CancelCheck | None = None,
 ) -> tuple[str, pd.DataFrame, SplitJobDetail]:
     job_id = job_id or uuid.uuid4().hex
-    resolved_scene_field = _resolve_scene_field(column_mode, scene_field)
     resolved_raw_fields = _resolve_raw_fields(column_mode, raw_fields)
     model = get_model_service()
 
@@ -180,8 +168,7 @@ def split_dataframe(
         address = _normalize_excel_value(record_data[address_column])
         raw = model.parse(address)
         levels = _raw_to_levels(raw)
-        scene_source = levels.get(resolved_scene_field, "") if column_mode != ColumnMode.raw else raw.get(resolved_scene_field, "")
-        scene = detect_scene(scene_source)
+        scene = detect_scene_by_fields(column_mode, levels, raw)
 
         row: dict[str, Any] = {column: _normalize_excel_value(record_data[column]) for column in original_columns}
         row["new_address"] = address
@@ -205,7 +192,7 @@ def split_dataframe(
         job_id=job_id,
         status=SplitJobStatus.cancelled if cancelled else SplitJobStatus.completed,
         column_mode=column_mode,
-        scene_field=resolved_scene_field,
+        scene_field=scene_field or "",
         total_rows=total_rows,
         processed_rows=len(result_df),
         columns=list(result_df.columns),

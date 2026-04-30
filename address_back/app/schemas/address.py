@@ -53,6 +53,10 @@ class SplitJobDetail(BaseModel):
     result_file: str | None = None
     cache_key: str | None = None
     error: str | None = None
+    storage_backend: str = "sqlite"
+    storage_host: str = ""
+    storage_port: int | None = None
+    storage_db: int | None = None
 
 
 class SplitRecordResponse(BaseModel):
@@ -68,6 +72,11 @@ class SplitRecordResponse(BaseModel):
     splitScheme: str
     sceneField: str
     downloadUrl: str
+    storageBackend: str
+    storageHost: str = ""
+    storagePort: int | None = None
+    storageDb: int | None = None
+    storageLabel: str
 
 
 class SplitResultDetailResponse(BaseModel):
@@ -146,4 +155,13 @@ class RedisConfigResponse(RedisConfigPayload):
 
 class RedisTestResponse(BaseModel):
     ok: bool
+    message: str
+
+
+class RedisStatusResponse(BaseModel):
+    available: bool
+    mode: str
+    host: str
+    port: int
+    db: int
     message: str

@@ -71,7 +71,7 @@ export interface ExcelInspectResponse {
 }
 
 export interface RedisConfig {
-  mode: 'local' | 'remote'
+  mode: 'local' | 'remote' | 'disabled'
   host: string
   port: number
   db: number
@@ -81,6 +81,15 @@ export interface RedisConfig {
 
 export interface RedisTestResponse {
   ok: boolean
+  message: string
+}
+
+export interface RedisStatusResponse {
+  available: boolean
+  mode: 'local' | 'remote' | 'disabled'
+  host: string
+  port: number
+  db: number
   message: string
 }
 
@@ -108,12 +117,14 @@ export const buildDownloadUrl = (downloadUrl: string) => {
 
 export const uploadAddressFile = async (
   file: File,
-  payload: { columnMode: ColumnMode; sceneField: string; sampleSize?: number; rawFields?: string[]; clientJobId?: string },
+  payload: { columnMode: ColumnMode; sceneField?: string; sampleSize?: number; rawFields?: string[]; clientJobId?: string },
 ) => {
   const formData = new FormData()
   formData.append('file', file)
   formData.append('column_mode', payload.columnMode)
-  formData.append('scene_field', payload.sceneField)
+  if (payload.sceneField) {
+    formData.append('scene_field', payload.sceneField)
+  }
   formData.append('sample_size', String(payload.sampleSize ?? 100))
   if (payload.clientJobId) {
     formData.append('client_job_id', payload.clientJobId)
@@ -141,7 +152,7 @@ export const inspectExcelFile = async (file: File) => {
 export const submitManualAddress = async (payload: {
   content: string
   columnMode: ColumnMode
-  sceneField: string
+  sceneField?: string
   rawFields?: string[]
   sampleSize?: number
   clientJobId?: string
@@ -269,6 +280,11 @@ const mapRecord = (item: any): SplitRecord => ({
   columnMode: item.columnMode,
   splitScheme: item.splitScheme,
   sceneField: item.sceneField,
+  storageBackend: item.storageBackend,
+  storageHost: item.storageHost,
+  storagePort: item.storagePort,
+  storageDb: item.storageDb,
+  storageLabel: item.storageLabel,
 })
 
 export const deleteSplitRecord = async (id: string) =>
@@ -322,7 +338,6 @@ export const getColumnSettings = async (mode: ColumnMode) => {
 export const updateVisibleColumns = async (payload: {
   mode: ColumnMode
   columns: ColumnSettingItem[]
-  sceneField: string
 }) => {
   await wait()
   return clone(payload)
@@ -335,11 +350,18 @@ export const getManualInputSeed = async () => {
 
 export const getRedisConfig = async () => requestJson<RedisConfig>('/environment/redis')
 
+export const getRedisStatus = async () => requestJson<RedisStatusResponse>('/environment/redis/status')
+
 export const saveRedisConfig = async (payload: RedisConfig) =>
   requestJson<RedisConfig>('/environment/redis', {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(payload),
+  })
+
+export const disconnectRedisConfig = async () =>
+  requestJson<RedisConfig>('/environment/redis/disconnect', {
+    method: 'POST',
   })
 
 export const testRedisConfig = async (payload: RedisConfig) =>

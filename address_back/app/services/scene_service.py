@@ -4,7 +4,7 @@ from dataclasses import dataclass
 from uuid import uuid4
 
 from app.core.config import DATA_DIR
-from app.schemas.address import SceneRulePayload, SceneRuleResponse
+from app.schemas.address import ColumnMode, SceneRulePayload, SceneRuleResponse
 from app.services.db import get_connection, init_db
 
 
@@ -307,16 +307,35 @@ def reset_default_scene_rules() -> list[SceneRuleResponse]:
     return list_scene_rules()
 
 
-def detect_scene(value: str) -> dict[str, str]:
-    text = str(value or "").strip()
-    if not text:
-        return {"scene_code": "", "scene": ""}
+def _match_field_value(match_field: str, column_mode: ColumnMode, levels: dict[str, str], raw: dict[str, str]) -> str:
+    level_field, _, raw_field = match_field.partition("/")
+    if column_mode == ColumnMode.raw and raw_field.strip():
+        return str(raw.get(raw_field.strip(), "") or "").strip()
+    return str(levels.get(level_field.strip(), "") or "").strip()
 
+
+def detect_scene_by_fields(column_mode: ColumnMode, levels: dict[str, str], raw: dict[str, str]) -> dict[str, str]:
+    has_source_text = False
     for item in list_scene_rules():
+        text = _match_field_value(item.matchField, column_mode, levels, raw)
+        if not text:
+            continue
+        has_source_text = True
         try:
             if re.compile(item.pattern).match(text):
                 return {"scene_code": item.id, "scene": item.name}
         except re.error:
             continue
 
+    if not has_source_text:
+        return {"scene_code": "", "scene": ""}
+
     return {"scene_code": "14", "scene": "其他/沿街商铺"}
+
+
+def detect_scene(value: str) -> dict[str, str]:
+    text = str(value or "").strip()
+    if not text:
+        return {"scene_code": "", "scene": ""}
+
+    return detect_scene_by_fields(ColumnMode.level8, {"level_7": text}, {})

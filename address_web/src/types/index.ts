@@ -42,6 +42,11 @@ export interface SplitRecord {
   columnMode?: ColumnMode
   splitScheme?: string
   sceneField?: string
+  storageBackend?: 'sqlite' | 'redis' | string
+  storageHost?: string
+  storagePort?: number | null
+  storageDb?: number | null
+  storageLabel?: string
 }
 
 export interface SceneRule {

@@ -19,6 +19,8 @@ INDEX_KEY = "address:split:index"
 @lru_cache(maxsize=1)
 def get_redis() -> redis.Redis:
     config = get_redis_config()
+    if config.mode == "disabled":
+        raise ConnectionError("Redis 已断开")
     client = redis.Redis(
         host=config.host,
         port=config.port,
@@ -39,16 +41,21 @@ def reset_redis_connection() -> None:
 def test_connection(config_payload: dict[str, Any] | None = None) -> tuple[bool, str]:
     try:
         if config_payload is None:
+            config = get_redis_config()
+            if config.mode == "disabled":
+                return False, "Redis 已断开，系统正在使用本地模式"
             client = get_redis()
         else:
+            if config_payload.get("mode") == "disabled":
+                return False, "Redis 已断开，系统正在使用本地模式"
             client = redis.Redis(
                 host=config_payload["host"],
                 port=int(config_payload["port"]),
                 db=int(config_payload.get("db", 0)),
                 password=config_payload.get("password") or None,
                 decode_responses=True,
-                socket_connect_timeout=3,
-                socket_timeout=3,
+                socket_connect_timeout=float(config_payload.get("timeout", 3)),
+                socket_timeout=float(config_payload.get("timeout", 3)),
             )
         pong = client.ping()
         return bool(pong), "Redis 连接成功" if pong else "Redis 未返回 PONG"
@@ -62,6 +69,37 @@ def redis_available() -> bool:
         return True
     except Exception:
         return False
+
+
+def get_redis_status() -> dict[str, Any]:
+    config = get_redis_config()
+    if config.mode == "disabled":
+        return {
+            "available": False,
+            "mode": config.mode,
+            "host": config.host,
+            "port": config.port,
+            "db": config.db,
+            "message": "当前未连接 Redis，系统将使用本地模式运行；如需跨任务缓存和高性能记录查询，请安装或配置 Redis。",
+        }
+    ok, message = test_connection({**config.model_dump(), "timeout": 0.6})
+    return {
+        "available": ok,
+        "mode": config.mode,
+        "host": config.host,
+        "port": config.port,
+        "db": config.db,
+        "message": message if ok else "当前未连接 Redis，系统将使用本地模式运行；如需跨任务缓存和高性能记录查询，请安装或配置 Redis。",
+    }
+
+
+def get_storage_config() -> dict[str, Any]:
+    config = get_redis_config()
+    return {
+        "host": config.host,
+        "port": config.port,
+        "db": config.db,
+    }
 
 
 def build_cache_key(filename: str, sample_size: int, scheme: str = "") -> str:

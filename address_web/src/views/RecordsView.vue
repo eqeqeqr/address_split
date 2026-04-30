@@ -35,6 +35,14 @@
             {{ formatSplitScheme(row) }}
           </span>
         </template>
+        <template #cell-storage="{ row }">
+          <span class="storage-cell" :class="row.storageBackend === 'redis' ? 'redis' : 'sqlite'">
+            <strong>{{ row.storageBackend === 'redis' ? 'Redis' : 'SQLite' }}</strong>
+            <small v-if="row.storageBackend === 'redis'">
+              {{ row.storageHost }} / {{ row.storagePort }} / {{ row.storageDb }}
+            </small>
+          </span>
+        </template>
         <template #cell-status="{ row }">
           <StatusBadge
             :text="row.status === 'success' ? '完成' : '部分失败'"
@@ -45,7 +53,14 @@
           <span class="link-group">
             <RouterLink class="action-link" :to="`/records/${row.id}`">查看</RouterLink>
             <a class="action-link" :href="row.downloadUrl" target="_blank" rel="noreferrer">下载</a>
-            <span class="action-link danger" @click="removeRecord(row.id)">删除</span>
+            <button
+              type="button"
+              class="action-link action-button danger"
+              :disabled="deletingId === row.id"
+              @click="removeRecord(row.id)"
+            >
+              {{ deletingId === row.id ? '删除中' : '删除' }}
+            </button>
           </span>
         </template>
       </BaseTable>
@@ -62,6 +77,10 @@
         @page-size-change="changePageSize"
       />
     </section>
+
+    <div v-if="message" class="records-toast" :class="{ success: messageType === 'success', danger: messageType === 'danger' }">
+      {{ message }}
+    </div>
   </div>
 </template>
 
@@ -81,12 +100,17 @@ const taskKeyword = ref('')
 const statusFilter = ref('all')
 const page = ref(1)
 const pageSize = ref(20)
+const deletingId = ref('')
+const message = ref('')
+const messageType = ref<'success' | 'danger'>('success')
+let messageTimer: number | undefined
 const pageSizeOptions = [20, 50, 100]
 
 const recordColumns: TableColumn[] = [
   { key: 'taskName', label: '任务名称', width: '250px' },
   { key: 'source', label: '数据来源', width: '120px' },
   { key: 'splitScheme', label: '拆分方案', width: '150px' },
+  { key: 'storage', label: '存储位置', width: '170px' },
   { key: 'total', label: '总条数', width: '110px' },
   { key: 'success', label: '成功条数', width: '120px' },
   { key: 'failed', label: '失败条数', width: '120px' },
@@ -126,11 +150,36 @@ const loadRecords = async () => {
   records.value = await getSplitRecords()
 }
 
+const showMessage = (text: string, type: 'success' | 'danger') => {
+  message.value = text
+  messageType.value = type
+  if (messageTimer !== undefined) {
+    window.clearTimeout(messageTimer)
+  }
+  messageTimer = window.setTimeout(() => {
+    message.value = ''
+    messageTimer = undefined
+  }, 4000)
+}
+
 const removeRecord = async (id: string) => {
-  await deleteSplitRecord(id)
-  await loadRecords()
-  if (page.value > totalPages.value) {
-    page.value = totalPages.value
+  if (deletingId.value) {
+    return
+  }
+
+  deletingId.value = id
+  try {
+    await deleteSplitRecord(id)
+    records.value = records.value.filter((item) => item.id !== id)
+    await loadRecords()
+    if (page.value > totalPages.value) {
+      page.value = totalPages.value
+    }
+    showMessage('拆分记录已删除', 'success')
+  } catch (error) {
+    showMessage(error instanceof Error ? error.message : '删除拆分记录失败', 'danger')
+  } finally {
+    deletingId.value = ''
   }
 }
 
@@ -215,5 +264,87 @@ onMounted(async () => {
   text-overflow: ellipsis;
   white-space: nowrap;
   vertical-align: middle;
+}
+
+.storage-cell {
+  display: grid;
+  gap: 2px;
+  line-height: 1.25;
+}
+
+.storage-cell strong {
+  font-size: 14px;
+}
+
+.storage-cell small {
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+.storage-cell.redis strong {
+  color: #0f766e;
+}
+
+.storage-cell.sqlite strong {
+  color: #475569;
+}
+
+:deep(.data-table th:last-child),
+:deep(.data-table td:last-child) {
+  position: sticky;
+  right: 0;
+  z-index: 2;
+  background: #fff;
+  box-shadow: -10px 0 18px rgba(15, 23, 42, 0.04);
+}
+
+:deep(.data-table th:last-child) {
+  z-index: 3;
+  background: #f7f9fd;
+}
+
+.link-group {
+  display: inline-flex;
+  gap: 12px;
+  align-items: center;
+  white-space: nowrap;
+}
+
+.action-button {
+  min-height: auto;
+  padding: 0;
+  border: 0;
+  background: transparent;
+}
+
+.action-button:disabled {
+  cursor: not-allowed;
+  opacity: 0.6;
+}
+
+.records-toast {
+  position: fixed;
+  right: 28px;
+  top: 24px;
+  z-index: 100;
+  max-width: min(360px, calc(100vw - 56px));
+  padding: 12px 16px;
+  border-radius: 12px;
+  border: 1px solid var(--border);
+  background: #fff;
+  box-shadow: 0 18px 48px rgba(15, 23, 42, 0.16);
+  font-weight: 700;
+}
+
+.records-toast.success {
+  color: #047857;
+  border-color: rgba(16, 185, 129, 0.35);
+  background: #ecfdf5;
+}
+
+.records-toast.danger {
+  color: #b91c1c;
+  border-color: rgba(239, 68, 68, 0.35);
+  background: #fef2f2;
 }
 </style>

@@ -2,32 +2,18 @@
   <div>
     <PageHeader title="环境配置" subtitle="配置地址拆分服务运行所需的 Redis 连接环境" />
 
+    <div v-if="redisStatus && !redisStatus.available" class="redis-warning">
+      <strong>Redis 未连接</strong>
+      <span>{{ redisStatus.message }}</span>
+    </div>
+
     <section class="card section-card environment-card">
       <div class="env-heading">
         <div>
           <h2>Redis 配置</h2>
-          <p>支持本地 Redis 和远程 Redis，保存后后端会使用该配置读写拆分缓存与记录。</p>
+          <p>填写 Redis 连接信息即可，保存后后端会使用该配置读写拆分缓存与记录。</p>
         </div>
         <span class="env-badge">{{ activeRedisLabel }}</span>
-      </div>
-
-      <div class="mode-switch">
-        <button
-          type="button"
-          class="mode-button"
-          :class="{ active: form.mode === 'local' }"
-          @click="setMode('local')"
-        >
-          本地 Redis
-        </button>
-        <button
-          type="button"
-          class="mode-button"
-          :class="{ active: form.mode === 'remote' }"
-          @click="setMode('remote')"
-        >
-          远程 Redis
-        </button>
       </div>
 
       <div class="active-redis-banner" :class="activeConfig.mode">
@@ -35,9 +21,7 @@
         <div>
           <strong>当前激活：{{ activeRedisLabel }}</strong>
           <p>{{ activeConfig.host || '未填写 Host' }}:{{ activeConfig.port || '-' }} / DB {{ activeConfig.db ?? 0 }}</p>
-          <small v-if="form.mode !== activeConfig.mode">
-            正在编辑{{ editingRedisLabel }}，保存配置后才会切换激活 Redis。
-          </small>
+          <small>修改下方配置后，需要点击“保存配置”才会切换后端实际使用的 Redis。</small>
         </div>
       </div>
 
@@ -78,6 +62,9 @@
         <button type="button" class="secondary-button" :disabled="loading || testing" @click="testConfig">
           {{ testing ? '测试中...' : '测试连接' }}
         </button>
+        <button type="button" class="danger-button" :disabled="loading || saving || testing || disconnecting" @click="disconnectConfig">
+          {{ disconnecting ? '断开中...' : '断开连接' }}
+        </button>
         <button type="button" class="primary-button" :disabled="loading || saving" @click="saveConfig">
           {{ saving ? '保存中...' : '保存配置' }}
         </button>
@@ -93,18 +80,23 @@
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref } from 'vue'
 import {
+  disconnectRedisConfig,
   getRedisConfig,
+  getRedisStatus,
   saveRedisConfig,
   testRedisConfig,
   type RedisConfig,
+  type RedisStatusResponse,
 } from '../api/address'
 import PageHeader from '../components/PageHeader.vue'
 
 const loading = ref(false)
 const saving = ref(false)
 const testing = ref(false)
+const disconnecting = ref(false)
 const testOk = ref(false)
 const message = ref('')
+const redisStatus = ref<RedisStatusResponse | null>(null)
 let toastTimer: number | undefined
 
 const form = reactive<RedisConfig>({
@@ -125,8 +117,27 @@ const activeConfig = reactive<RedisConfig>({
   updatedAt: '',
 })
 
-const activeRedisLabel = computed(() => (activeConfig.mode === 'local' ? '本地 Redis' : '远程 Redis'))
-const editingRedisLabel = computed(() => (form.mode === 'local' ? '本地 Redis' : '远程 Redis'))
+const redisModeLabel = (mode: RedisConfig['mode']) => {
+  if (mode === 'remote') {
+    return '远程 Redis'
+  }
+  if (mode === 'disabled') {
+    return '未连接 Redis'
+  }
+  return '本地 Redis'
+}
+
+const activeRedisLabel = computed(() => redisModeLabel(activeConfig.mode))
+
+const inferMode = (host: string): RedisConfig['mode'] => {
+  const normalizedHost = host.trim().toLowerCase()
+  return normalizedHost === '127.0.0.1' || normalizedHost === 'localhost' ? 'local' : 'remote'
+}
+
+const normalizedForm = (): RedisConfig => ({
+  ...form,
+  mode: inferMode(form.host),
+})
 
 const applyConfig = (config: RedisConfig) => {
   form.mode = config.mode
@@ -171,13 +182,6 @@ const showMessage = (text: string, ok: boolean) => {
   }, 5000)
 }
 
-const setMode = (mode: RedisConfig['mode']) => {
-  form.mode = mode
-  if (mode === 'local' && !form.host.trim()) {
-    form.host = '127.0.0.1'
-  }
-}
-
 const loadConfig = async (notify = false) => {
   loading.value = true
   try {
@@ -194,6 +198,21 @@ const loadConfig = async (notify = false) => {
   }
 }
 
+const loadRedisStatus = async () => {
+  try {
+    redisStatus.value = await getRedisStatus()
+  } catch {
+    redisStatus.value = {
+      available: false,
+      mode: activeConfig.mode,
+      host: activeConfig.host,
+      port: activeConfig.port,
+      db: activeConfig.db,
+      message: '当前未连接 Redis，系统将使用本地模式运行；如需跨任务缓存和高性能记录查询，请安装或配置 Redis。',
+    }
+  }
+}
+
 const resetConfig = () => {
   void loadConfig(true)
 }
@@ -207,8 +226,9 @@ const testConfig = async () => {
 
   testing.value = true
   try {
-    const result = await testRedisConfig({ ...form })
+    const result = await testRedisConfig(normalizedForm())
     showMessage(result.message, result.ok)
+    await loadRedisStatus()
   } catch (err) {
     showMessage(err instanceof Error ? err.message : 'Redis 连接测试失败', false)
   } finally {
@@ -225,10 +245,11 @@ const saveConfig = async () => {
 
   saving.value = true
   try {
-    const saved = await saveRedisConfig({ ...form })
+    const saved = await saveRedisConfig(normalizedForm())
     applyConfig(saved)
     applyActiveConfig(saved)
     showMessage('Redis 配置已保存到本地 SQLite', true)
+    await loadRedisStatus()
   } catch (err) {
     showMessage(err instanceof Error ? err.message : '保存 Redis 配置失败', false)
   } finally {
@@ -236,12 +257,29 @@ const saveConfig = async () => {
   }
 }
 
-onMounted(loadConfig)
+const disconnectConfig = async () => {
+  disconnecting.value = true
+  try {
+    const disconnected = await disconnectRedisConfig()
+    applyConfig(disconnected)
+    applyActiveConfig(disconnected)
+    await loadRedisStatus()
+    showMessage('Redis 已断开，系统将使用本地模式运行', true)
+  } catch (err) {
+    showMessage(err instanceof Error ? err.message : '断开 Redis 失败', false)
+  } finally {
+    disconnecting.value = false
+  }
+}
+
+onMounted(async () => {
+  await loadConfig()
+  await loadRedisStatus()
+})
 </script>
 
 <style scoped>
 .environment-card {
-  max-width: 860px;
   width: 100%;
   box-sizing: border-box;
 }
@@ -272,29 +310,6 @@ onMounted(loadConfig)
   font-weight: 700;
 }
 
-.mode-switch {
-  display: inline-flex;
-  gap: 8px;
-  padding: 6px;
-  border-radius: 14px;
-  background: #f1f5f9;
-  margin-bottom: 14px;
-}
-
-.mode-button {
-  padding: 10px 18px;
-  border-radius: 10px;
-  color: #475569;
-  font-weight: 700;
-  cursor: pointer;
-}
-
-.mode-button.active {
-  color: var(--primary);
-  background: #fff;
-  box-shadow: 0 8px 20px rgba(15, 23, 42, 0.08);
-}
-
 .active-redis-banner {
   display: flex;
   align-items: center;
@@ -309,6 +324,11 @@ onMounted(loadConfig)
 .active-redis-banner.remote {
   border-color: rgba(245, 158, 11, 0.28);
   background: linear-gradient(180deg, #fffdf7 0%, #fff7e6 100%);
+}
+
+.active-redis-banner.disabled {
+  border-color: rgba(148, 163, 184, 0.35);
+  background: linear-gradient(180deg, #f8fafc 0%, #f1f5f9 100%);
 }
 
 .active-redis-banner strong {
@@ -337,9 +357,14 @@ onMounted(loadConfig)
   flex: none;
 }
 
+.active-redis-banner.disabled .active-pulse {
+  background: #94a3b8;
+  box-shadow: 0 0 0 7px rgba(148, 163, 184, 0.16);
+}
+
 .env-form {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-columns: repeat(4, minmax(160px, 1fr));
   gap: 18px;
 }
 
@@ -413,5 +438,62 @@ onMounted(loadConfig)
   color: #b91c1c;
   border-color: rgba(239, 68, 68, 0.35);
   background: #fef2f2;
+}
+
+.danger-button {
+  min-height: 44px;
+  padding: 0 18px;
+  border-radius: 10px;
+  color: #b91c1c;
+  border: 1px solid #fecaca;
+  background: #fff5f5;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.danger-button:disabled {
+  cursor: not-allowed;
+  opacity: 0.65;
+}
+
+.redis-warning {
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+  margin-bottom: 16px;
+  padding: 14px 16px;
+  border: 1px solid #fed7aa;
+  border-radius: 14px;
+  color: #9a3412;
+  background: #fff7ed;
+}
+
+.redis-warning strong {
+  flex: none;
+}
+
+@media (max-width: 1280px) {
+  .env-form {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 760px) {
+  .env-heading,
+  .redis-warning {
+    flex-direction: column;
+  }
+
+  .env-form {
+    grid-template-columns: 1fr;
+  }
+
+  .env-actions {
+    align-items: stretch;
+  }
+
+  .env-actions button {
+    flex: 1 1 140px;
+  }
 }
 </style>

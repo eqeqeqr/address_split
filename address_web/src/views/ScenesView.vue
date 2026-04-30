@@ -16,25 +16,6 @@
       </div>
 
       <template v-if="activeTab === 'rules'">
-      <div class="scene-config">
-        <label>
-          <span class="field-label">8级/11级默认识别字段</span>
-          <select class="select">
-            <option>level_7：建筑物/小区/自然村</option>
-          </select>
-        </label>
-        <label>
-          <span class="field-label">原始字段推荐识别字段</span>
-          <select class="select">
-            <option>poi：兴趣点</option>
-            <option>subpoi：子兴趣点</option>
-            <option>redundant：冗余描述</option>
-            <option>others：其他字段</option>
-          </select>
-        </label>
-        <p>8级和11级固定使用 level_7；原始字段自定义时可选择 poi、subpoi、redundant、others。</p>
-      </div>
-
       <BaseTable :columns="sceneColumns" :rows="rules" row-key="id">
         <template #cell-statusText="{ row }">
           <span>{{ row.statusText }}</span>
@@ -94,18 +75,11 @@
               <input v-model.number="form.priority" class="input" type="number" min="1" />
             </label>
             <label>
-              <span class="field-label">8级/11级识别字段</span>
-              <select class="select" disabled>
-                <option value="level_7">level_7：建筑物/小区/自然村（必选）</option>
-              </select>
-            </label>
-            <label>
-              <span class="field-label">原始字段识别字段</span>
-              <select v-model="form.rawMatchField" class="select">
-                <option value="poi">poi：兴趣点</option>
-                <option value="subpoi">subpoi：子兴趣点</option>
-                <option value="redundant">redundant：冗余描述</option>
-                <option value="others">others：其他字段</option>
+              <span class="field-label">识别字段</span>
+              <select v-model="form.matchField" class="select">
+                <option v-for="item in matchFieldOptions" :key="item.value" :value="item.value">
+                  {{ item.label }}
+                </option>
               </select>
             </label>
             <label class="pattern-field">
@@ -145,7 +119,7 @@ const isResetting = ref(false)
 const form = ref({
   name: '',
   pattern: '',
-  rawMatchField: 'poi',
+  matchField: 'level_7 / poi',
   priority: 1,
 })
 
@@ -162,18 +136,15 @@ const loadScenes = async () => {
   rules.value = await getSceneList()
 }
 
-const rawMatchFieldOptions = ['poi', 'subpoi', 'redundant', 'others']
+const matchFieldOptions = [
+  { label: 'level_7 / poi', value: 'level_7 / poi' },
+  { label: 'level_7 / subpoi', value: 'level_7 / subpoi' },
+  { label: 'level_7 / redundant', value: 'level_7 / redundant' },
+  { label: 'level_7 / others', value: 'level_7 / others' },
+]
 
-const getRawMatchField = (value: string) => {
-  if (value.includes('/')) {
-    const rawField = value.split('/')[1]?.trim()
-    return rawMatchFieldOptions.includes(rawField) ? rawField : 'poi'
-  }
-
-  return rawMatchFieldOptions.includes(value) ? value : 'poi'
-}
-
-const buildMatchField = () => `level_7 / ${form.value.rawMatchField}`
+const normalizeMatchField = (value: string) =>
+  matchFieldOptions.some((item) => item.value === value) ? value : 'level_7 / poi'
 
 const openCreate = () => {
   feedbackMessage.value = ''
@@ -182,7 +153,7 @@ const openCreate = () => {
   form.value = {
     name: '',
     pattern: '',
-    rawMatchField: 'poi',
+    matchField: 'level_7 / poi',
     priority: rules.value.length + 1,
   }
   showEditor.value = true
@@ -195,7 +166,7 @@ const openEdit = (rule: SceneRule) => {
   form.value = {
     name: rule.name,
     pattern: rule.pattern,
-    rawMatchField: getRawMatchField(rule.matchField),
+    matchField: normalizeMatchField(rule.matchField),
     priority: rule.priority,
   }
   showEditor.value = true
@@ -207,7 +178,7 @@ const saveScene = async () => {
   const payload = {
     name: form.value.name,
     pattern: form.value.pattern,
-    matchField: buildMatchField(),
+    matchField: form.value.matchField,
     priority: form.value.priority,
   }
   try {
@@ -260,29 +231,6 @@ onMounted(async () => {
 <style scoped>
 .scene-toolbar {
   margin-bottom: 22px;
-}
-
-.scene-config {
-  display: grid;
-  grid-template-columns: 240px 240px 1fr;
-  gap: 16px;
-  align-items: end;
-  margin-bottom: 22px;
-  padding: 16px;
-  border: 1px solid var(--border);
-  border-radius: 12px;
-  background: #f8fbff;
-}
-
-.scene-config label {
-  display: grid;
-  gap: 8px;
-}
-
-.scene-config p {
-  margin: 0;
-  color: #64748b;
-  font-size: 14px;
 }
 
 .scene-note {

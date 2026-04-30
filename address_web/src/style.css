@@ -38,10 +38,6 @@ body,
   margin: 0;
 }
 
-body {
-  min-width: 1280px;
-}
-
 button,
 input,
 textarea,
@@ -62,6 +58,7 @@ a {
 .page-shell {
   min-height: 100vh;
   padding: 16px;
+  overflow-x: hidden;
 }
 
 .app-frame {
@@ -79,6 +76,7 @@ a {
   flex: 1;
   min-width: 0;
   padding: 24px 28px 28px;
+  overflow-x: hidden;
 }
 
 .topbar {
