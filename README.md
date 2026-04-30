@@ -21,7 +21,6 @@ address_project/
   README.md          # 项目说明文档
 ```
 
-说明：`excel/`、`pdf/`、`原型设计/`、运行时上传文件、拆分结果、数据库、虚拟环境和前端依赖目录已加入 `.gitignore`，不会提交到 Git。
 
 ## 环境要求
 
