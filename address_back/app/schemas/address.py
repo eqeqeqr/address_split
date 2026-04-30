@@ -13,6 +13,7 @@ class ColumnMode(StrEnum):
 class SplitJobStatus(StrEnum):
     completed = "completed"
     failed = "failed"
+    cancelled = "cancelled"
 
 
 class SplitJobResponse(BaseModel):
@@ -64,6 +65,7 @@ class SplitRecordResponse(BaseModel):
     status: str
     startedAt: str
     columnMode: ColumnMode
+    splitScheme: str
     sceneField: str
     downloadUrl: str
 
@@ -95,6 +97,7 @@ class AddressSplitRequest(BaseModel):
     column_mode: ColumnMode = ColumnMode.level11
     scene_field: str | None = None
     raw_fields: list[str] | None = None
+    client_job_id: str | None = None
 
 
 class SceneRuleResponse(BaseModel):

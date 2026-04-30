@@ -34,8 +34,8 @@ export const detailTabs = [
 ]
 
 export const columnModes: Array<{ label: string; value: ColumnMode; description: string }> = [
-  { label: '8级标准列', value: 'level8', description: '固定返回 level_1 到 level_8，不支持自定义勾选' },
-  { label: '11级标准列', value: 'level11', description: '固定返回 level_1 到 level_11，不支持自定义勾选' },
+  { label: '8级标准列', value: 'level8', description: '固定追加 new_level_1 到 new_level_8，不支持自定义勾选' },
+  { label: '11级标准列', value: 'level11', description: '固定追加 new_level_1 到 new_level_11，不支持自定义勾选' },
   { label: '原始字段自定义', value: 'raw', description: '按 PDF 标注字段自由选择展示列' },
 ]
 
@@ -82,51 +82,52 @@ export const progressSteps: ProgressStep[] = [
 ]
 
 export const splitColumns: TableColumn[] = [
-  { key: 'rawAddress', label: '原始地址', width: '280px', className: 'address-cell' },
-  { key: 'level_1', label: 'level_1' },
-  { key: 'level_2', label: 'level_2' },
-  { key: 'level_3', label: 'level_3' },
-  { key: 'level_4', label: 'level_4' },
-  { key: 'level_5', label: 'level_5' },
-  { key: 'level_6', label: 'level_6' },
-  { key: 'level_7', label: 'level_7', width: '160px' },
-  { key: 'level_8', label: 'level_8' },
-  { key: 'result', label: '结果' },
+  { key: 'address', label: 'address', width: '280px', className: 'address-cell' },
+  { key: 'new_address', label: 'new_address', width: '280px', className: 'address-cell' },
+  { key: 'new_level_1', label: 'new_level_1' },
+  { key: 'new_level_2', label: 'new_level_2' },
+  { key: 'new_level_3', label: 'new_level_3' },
+  { key: 'new_level_4', label: 'new_level_4' },
+  { key: 'new_level_5', label: 'new_level_5' },
+  { key: 'new_level_6', label: 'new_level_6' },
+  { key: 'new_level_7', label: 'new_level_7', width: '160px' },
+  { key: 'new_level_8', label: 'new_level_8' },
+  { key: 'new_scene', label: 'new_scene' },
 ]
 
 export const level11Columns: TableColumn[] = [
   ...splitColumns.slice(0, -1),
-  { key: 'level_9', label: 'level_9' },
-  { key: 'level_10', label: 'level_10' },
-  { key: 'level_11', label: 'level_11' },
-  { key: 'result', label: '结果' },
+  { key: 'new_level_9', label: 'new_level_9' },
+  { key: 'new_level_10', label: 'new_level_10' },
+  { key: 'new_level_11', label: 'new_level_11' },
+  { key: 'new_scene', label: 'new_scene' },
 ]
 
 export const rawFieldColumns: TableColumn[] = [
-  { key: 'rawAddress', label: '原始地址', width: '280px', className: 'address-cell' },
-  { key: 'prov', label: 'prov' },
-  { key: 'city', label: 'city' },
-  { key: 'district', label: 'district' },
-  { key: 'devzone', label: 'devzone' },
-  { key: 'town', label: 'town' },
-  { key: 'community', label: 'community' },
-  { key: 'village_group', label: 'village_group' },
-  { key: 'road', label: 'road' },
-  { key: 'roadno', label: 'roadno' },
-  { key: 'poi', label: 'poi' },
-  { key: 'subpoi', label: 'subpoi' },
-  { key: 'houseno', label: 'houseno' },
-  { key: 'cellno', label: 'cellno' },
-  { key: 'floorno', label: 'floorno' },
-  { key: 'roomno', label: 'roomno' },
-  { key: 'detail', label: 'detail' },
-  { key: 'assist', label: 'assist' },
-  { key: 'distance', label: 'distance' },
-  { key: 'intersection', label: 'intersection' },
-  { key: 'redundant', label: 'redundant' },
-  { key: 'others', label: 'others' },
-  { key: 'scene', label: '场景' },
-  { key: 'result', label: '结果' },
+  { key: 'address', label: 'address', width: '280px', className: 'address-cell' },
+  { key: 'new_address', label: 'new_address', width: '280px', className: 'address-cell' },
+  { key: 'new_prov', label: 'new_prov' },
+  { key: 'new_city', label: 'new_city' },
+  { key: 'new_district', label: 'new_district' },
+  { key: 'new_devzone', label: 'new_devzone' },
+  { key: 'new_town', label: 'new_town' },
+  { key: 'new_community', label: 'new_community' },
+  { key: 'new_village_group', label: 'new_village_group' },
+  { key: 'new_road', label: 'new_road' },
+  { key: 'new_roadno', label: 'new_roadno' },
+  { key: 'new_poi', label: 'new_poi' },
+  { key: 'new_subpoi', label: 'new_subpoi' },
+  { key: 'new_houseno', label: 'new_houseno' },
+  { key: 'new_cellno', label: 'new_cellno' },
+  { key: 'new_floorno', label: 'new_floorno' },
+  { key: 'new_roomno', label: 'new_roomno' },
+  { key: 'new_detail', label: 'new_detail' },
+  { key: 'new_assist', label: 'new_assist' },
+  { key: 'new_distance', label: 'new_distance' },
+  { key: 'new_intersection', label: 'new_intersection' },
+  { key: 'new_redundant', label: 'new_redundant' },
+  { key: 'new_others', label: 'new_others' },
+  { key: 'new_scene', label: 'new_scene' },
 ]
 
 export const splitResults: SplitResultRow[] = [
@@ -496,31 +497,32 @@ export const sceneRules: SceneRule[] = [
 ]
 
 export const detailColumns: ColumnSettingItem[] = [
-  { key: 'rawAddress', label: '原始地址', visible: true, fixed: true },
-  { key: 'level_1', label: 'level_1', visible: true, fixed: true, description: '省份' },
-  { key: 'level_2', label: 'level_2', visible: true, fixed: true, description: '地市' },
-  { key: 'level_3', label: 'level_3', visible: true, fixed: true, description: '区县' },
-  { key: 'level_4', label: 'level_4', visible: true, fixed: true, description: '乡镇/街道' },
-  { key: 'level_5', label: 'level_5', visible: true, fixed: true, description: '路/巷/街' },
-  { key: 'level_6', label: 'level_6', visible: true, fixed: true, description: '门牌号码/路号' },
-  { key: 'level_7', label: 'level_7', visible: true, fixed: true, description: '建筑物/小区/自然村' },
-  { key: 'level_8', label: 'level_8', visible: true, fixed: true, description: '楼栋号' },
-  { key: 'result', label: '结果', visible: true },
+  { key: 'address', label: 'address', visible: true, fixed: true, description: '原表地址字段' },
+  { key: 'new_address', label: 'new_address', visible: true, fixed: true, description: '生成地址' },
+  { key: 'new_level_1', label: 'new_level_1', visible: true, fixed: true, description: '省份' },
+  { key: 'new_level_2', label: 'new_level_2', visible: true, fixed: true, description: '地市' },
+  { key: 'new_level_3', label: 'new_level_3', visible: true, fixed: true, description: '区县' },
+  { key: 'new_level_4', label: 'new_level_4', visible: true, fixed: true, description: '乡镇/街道' },
+  { key: 'new_level_5', label: 'new_level_5', visible: true, fixed: true, description: '路/巷/街' },
+  { key: 'new_level_6', label: 'new_level_6', visible: true, fixed: true, description: '门牌号码/路号' },
+  { key: 'new_level_7', label: 'new_level_7', visible: true, fixed: true, description: '建筑物/小区/自然村' },
+  { key: 'new_level_8', label: 'new_level_8', visible: true, fixed: true, description: '楼栋号' },
+  { key: 'new_scene', label: 'new_scene', visible: true, fixed: true, description: '场景' },
 ]
 
 export const level11ColumnSettings: ColumnSettingItem[] = [
   ...detailColumns.slice(0, -1),
-  { key: 'level_9', label: 'level_9', visible: true, fixed: true, description: '单元' },
-  { key: 'level_10', label: 'level_10', visible: true, fixed: true, description: '楼层' },
-  { key: 'level_11', label: 'level_11', visible: true, fixed: true, description: '户室号/村内户号' },
-  { key: 'result', label: '结果', visible: true },
+  { key: 'new_level_9', label: 'new_level_9', visible: true, fixed: true, description: '单元' },
+  { key: 'new_level_10', label: 'new_level_10', visible: true, fixed: true, description: '楼层' },
+  { key: 'new_level_11', label: 'new_level_11', visible: true, fixed: true, description: '户室号/村内户号' },
+  { key: 'new_scene', label: 'new_scene', visible: true, fixed: true, description: '场景' },
 ]
 
 export const rawColumnSettings: ColumnSettingItem[] = rawFieldColumns.map((column) => ({
   key: column.key,
   label: column.label,
-  visible: ['rawAddress', 'prov', 'city', 'district', 'town', 'road', 'roadno', 'poi', 'subpoi', 'scene', 'result'].includes(column.key),
-  fixed: ['rawAddress', 'result'].includes(column.key),
+  visible: true,
+  fixed: ['address', 'new_address', 'new_scene'].includes(column.key),
 }))
 
 export const columnsByMode: Record<ColumnMode, TableColumn[]> = {

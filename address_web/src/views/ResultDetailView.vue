@@ -63,7 +63,6 @@
       <div class="toolbar detail-actions">
         <div class="toolbar-spacer" />
         <a class="secondary-button" :href="downloadUrl" target="_blank" rel="noreferrer">⇩ 导出结果</a>
-        <a class="secondary-button" :href="downloadUrl" target="_blank" rel="noreferrer">⇩ 导出全部结果</a>
         <button type="button" class="ghost-button" @click="showColumnModal = true">⚙ 列显示</button>
       </div>
 
@@ -164,15 +163,24 @@ const pageButtons = computed(() => {
 
 const tableColumns = computed<TableColumn[]>(() => {
   if (resultColumns.value.length > 0) {
-    return resultColumns.value.map((key) => {
-      const known = columnsByMode[columnMode.value].find((column) => column.key === key)
-      return known ?? {
-        key,
-        label: key === 'scene_code' ? '场景编码' : key === 'scene' ? '场景' : key,
-        width: key === 'address' ? '280px' : undefined,
-        className: key === 'address' ? 'address-cell' : undefined,
-      }
-    })
+    return resultColumns.value
+      .map((key) => {
+        const known = columnsByMode[columnMode.value].find((column) => column.key === key)
+        return known ?? {
+          key,
+          label: key,
+          width: ['address', '地址', 'new_address'].includes(key) ? '280px' : undefined,
+          className: ['address', '地址', 'new_address'].includes(key) ? 'address-cell' : undefined,
+        }
+      })
+      .filter((column) => {
+        if (columnMode.value !== 'raw') {
+          return true
+        }
+
+        const setting = columnSettings.value.find((item) => item.key === column.key)
+        return setting ? setting.visible : true
+      })
   }
 
   return columnsByMode[columnMode.value].filter((column) =>
@@ -234,29 +242,29 @@ const loadDetail = async () => {
   stats.value = detail.stats
   rows.value = detail.rows.map((row, index) => ({
     id: `${route.params.id}-${page.value}-${index}`,
-    rawAddress: String(row.address ?? row.rawAddress ?? ''),
-    province: String(row.level_1 ?? row.prov ?? ''),
-    city: String(row.level_2 ?? row.city ?? ''),
-    district: String(row.level_3 ?? row.district ?? ''),
-    street: String(row.level_4 ?? row.town ?? ''),
-    road: String(row.level_5 ?? row.road ?? ''),
-    roadNo: String(row.level_6 ?? row.roadno ?? ''),
-    building: String(row.level_7 ?? row.poi ?? ''),
-    roomNo: String(row.level_8 ?? row.houseno ?? ''),
+    rawAddress: String(row.address ?? row['地址'] ?? row.rawAddress ?? ''),
+    province: String(row.new_level_1 ?? row.level_1 ?? row.new_prov ?? row.prov ?? ''),
+    city: String(row.new_level_2 ?? row.level_2 ?? row.new_city ?? row.city ?? ''),
+    district: String(row.new_level_3 ?? row.level_3 ?? row.new_district ?? row.district ?? ''),
+    street: String(row.new_level_4 ?? row.level_4 ?? row.new_town ?? row.town ?? ''),
+    road: String(row.new_level_5 ?? row.level_5 ?? row.new_road ?? row.road ?? ''),
+    roadNo: String(row.new_level_6 ?? row.level_6 ?? row.new_roadno ?? row.roadno ?? ''),
+    building: String(row.new_level_7 ?? row.level_7 ?? row.new_poi ?? row.poi ?? ''),
+    roomNo: String(row.new_level_8 ?? row.level_8 ?? row.new_houseno ?? row.houseno ?? ''),
     result: '识别完成',
     ...Object.fromEntries(Object.entries(row).map(([key, value]) => [key, String(value ?? '')])),
   }))
   failedRows.value = detail.failedRows.map((row, index) => ({
     id: `failed-${route.params.id}-${index}`,
-    rawAddress: String(row.address ?? row.rawAddress ?? ''),
-    province: String(row.level_1 ?? row.prov ?? ''),
-    city: String(row.level_2 ?? row.city ?? ''),
-    district: String(row.level_3 ?? row.district ?? ''),
-    street: String(row.level_4 ?? row.town ?? ''),
-    road: String(row.level_5 ?? row.road ?? ''),
-    roadNo: String(row.level_6 ?? row.roadno ?? ''),
-    building: String(row.level_7 ?? row.poi ?? ''),
-    roomNo: String(row.level_8 ?? row.houseno ?? ''),
+    rawAddress: String(row.address ?? row['地址'] ?? row.rawAddress ?? ''),
+    province: String(row.new_level_1 ?? row.level_1 ?? row.new_prov ?? row.prov ?? ''),
+    city: String(row.new_level_2 ?? row.level_2 ?? row.new_city ?? row.city ?? ''),
+    district: String(row.new_level_3 ?? row.level_3 ?? row.new_district ?? row.district ?? ''),
+    street: String(row.new_level_4 ?? row.level_4 ?? row.new_town ?? row.town ?? ''),
+    road: String(row.new_level_5 ?? row.level_5 ?? row.new_road ?? row.road ?? ''),
+    roadNo: String(row.new_level_6 ?? row.level_6 ?? row.new_roadno ?? row.roadno ?? ''),
+    building: String(row.new_level_7 ?? row.level_7 ?? row.new_poi ?? row.poi ?? ''),
+    roomNo: String(row.new_level_8 ?? row.level_8 ?? row.new_houseno ?? row.houseno ?? ''),
     result: '待人工确认',
     ...Object.fromEntries(Object.entries(row).map(([key, value]) => [key, String(value ?? '')])),
   }))

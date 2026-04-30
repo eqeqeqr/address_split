@@ -67,9 +67,12 @@
           <p class="empty-note">建议文件中包含一列地址数据，表头名称为：address/地址</p>
           <p v-if="errorMessage" class="error-note">{{ errorMessage }}</p>
 
-          <button type="button" class="primary-button" :disabled="isProcessing || isInspectingExcel" @click="openSplitConfirm">
-            ▶ {{ isProcessing ? '拆分中...' : '开始拆分' }}
-          </button>
+        <button type="button" class="primary-button" :disabled="isProcessing || isInspectingExcel" @click="openSplitConfirm">
+          ▶ {{ isProcessing ? '拆分中...' : '开始拆分' }}
+        </button>
+        <button v-if="isProcessing" type="button" class="danger-button split-stop-button" :disabled="isCancelling" @click="cancelCurrentSplit">
+          {{ isCancelling ? '正在结束...' : '结束拆分并保留结果' }}
+        </button>
         </div>
 
         <div class="card progress-panel">
@@ -90,7 +93,7 @@
               </div>
               <span
                 class="step-status"
-                :class="step.status === 'doing' ? 'is-doing' : step.status === 'done' ? 'is-done' : ''"
+                :class="step.status === 'doing' ? 'is-doing' : step.status === 'done' ? 'is-done' : step.status === 'interrupted' ? 'is-interrupted' : ''"
               >
                 {{ step.text }}
               </span>
@@ -116,6 +119,9 @@
             <button type="button" class="primary-button" :disabled="isProcessing" @click="openSplitConfirm">
               ▶ {{ isProcessing ? '拆分中...' : '开始拆分' }}
             </button>
+            <button v-if="isProcessing" type="button" class="danger-button" :disabled="isCancelling" @click="cancelCurrentSplit">
+              {{ isCancelling ? '正在结束...' : '结束拆分' }}
+            </button>
           </div>
           <p v-if="errorMessage" class="error-note">{{ errorMessage }}</p>
         </div>
@@ -138,7 +144,7 @@
               </div>
               <span
                 class="step-status"
-                :class="step.status === 'doing' ? 'is-doing' : step.status === 'done' ? 'is-done' : ''"
+                :class="step.status === 'doing' ? 'is-doing' : step.status === 'done' ? 'is-done' : step.status === 'interrupted' ? 'is-interrupted' : ''"
               >
                 {{ step.text }}
               </span>
@@ -230,15 +236,19 @@ import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import {
   buildDownloadUrl,
+  cancelSplitJob,
+  connectSplitProgress,
+  createSplitJobId,
   getColumnSettings,
   getManualInputSeed,
   getSplitPreview,
+  getSplitResultDetail,
   inspectExcelFile,
   submitManualAddress,
   uploadAddressFile,
   updateVisibleColumns,
 } from '../api/address'
-import type { SplitJobResponse } from '../api/address'
+import type { SplitJobResponse, SplitProgressEvent } from '../api/address'
 import BaseTable from '../components/BaseTable.vue'
 import ColumnSettingsModal from '../components/ColumnSettingsModal.vue'
 import PageHeader from '../components/PageHeader.vue'
@@ -260,6 +270,7 @@ const manualInput = ref('')
 const selectedFile = ref<File | null>(null)
 const fileInputRef = ref<HTMLInputElement | null>(null)
 const isProcessing = ref(false)
+const isCancelling = ref(false)
 const isInspectingExcel = ref(false)
 const errorMessage = ref('')
 const downloadUrl = ref('')
@@ -275,6 +286,7 @@ const splitCountError = ref('')
 const columnMode = ref<ColumnMode>('level8')
 const sceneField = ref('level_7')
 const columnSettings = ref<ColumnSettingItem[]>(structuredClone(settingsByMode.level8))
+const currentJobId = ref('')
 const createIdleProgress = () => ({
   percent: 0,
   summary: {
@@ -292,9 +304,9 @@ const createIdleProgress = () => ({
 const progress = ref(createIdleProgress())
 const SPLIT_STATE_KEY = 'address-split-current-state'
 let progressTimer: number | undefined
+let progressSocket: WebSocket | undefined
 let progressStartedAt = 0
 let progressTargetRows = 0
-let progressSummaryStarted = false
 let isRestoringSplitState = false
 
 const manualCount = computed(() =>
@@ -324,15 +336,16 @@ const excelInspectText = computed(() => {
 
 const visibleColumns = computed<TableColumn[]>(() =>
   getColumnsForDisplay().filter((column) => {
-    if (resultColumns.value.length > 0) {
-      return true
-    }
-
     if (columnMode.value !== 'raw') {
       return true
     }
 
-    return columnSettings.value.find((item) => item.key === column.key)?.visible
+    const setting = columnSettings.value.find((item) => item.key === column.key)
+    if (!setting) {
+      return true
+    }
+
+    return setting.visible
   }),
 )
 
@@ -354,9 +367,9 @@ const toTableColumn = (key: string): TableColumn => {
 
   return {
     key,
-    label: key === 'scene_code' ? '场景编码' : key === 'scene' ? '场景' : key,
-    className: key === 'address' ? 'address-cell' : undefined,
-    width: key === 'address' ? '280px' : undefined,
+    label: key,
+    className: ['address', '地址', 'new_address'].includes(key) ? 'address-cell' : undefined,
+    width: ['address', '地址', 'new_address'].includes(key) ? '280px' : undefined,
   }
 }
 
@@ -371,15 +384,15 @@ const getColumnsForDisplay = () => {
 const mapPreviewRows = (response: SplitJobResponse): SplitResultRow[] =>
   response.preview.map((row, index) => ({
     id: `${response.job_id}-${index}`,
-    rawAddress: String(row.address ?? row.rawAddress ?? ''),
-    province: String(row.level_1 ?? row.prov ?? ''),
-    city: String(row.level_2 ?? row.city ?? ''),
-    district: String(row.level_3 ?? row.district ?? ''),
-    street: String(row.level_4 ?? row.town ?? ''),
-    road: String(row.level_5 ?? row.road ?? ''),
-    roadNo: String(row.level_6 ?? row.roadno ?? ''),
-    building: String(row.level_7 ?? row.poi ?? ''),
-    roomNo: String(row.level_8 ?? row.houseno ?? ''),
+    rawAddress: String(row.address ?? row['地址'] ?? row.rawAddress ?? ''),
+    province: String(row.new_level_1 ?? row.level_1 ?? row.new_prov ?? row.prov ?? ''),
+    city: String(row.new_level_2 ?? row.level_2 ?? row.new_city ?? row.city ?? ''),
+    district: String(row.new_level_3 ?? row.level_3 ?? row.new_district ?? row.district ?? ''),
+    street: String(row.new_level_4 ?? row.level_4 ?? row.new_town ?? row.town ?? ''),
+    road: String(row.new_level_5 ?? row.level_5 ?? row.new_road ?? row.road ?? ''),
+    roadNo: String(row.new_level_6 ?? row.level_6 ?? row.new_roadno ?? row.roadno ?? ''),
+    building: String(row.new_level_7 ?? row.level_7 ?? row.new_poi ?? row.poi ?? ''),
+    roomNo: String(row.new_level_8 ?? row.level_8 ?? row.new_houseno ?? row.houseno ?? ''),
     result: '识别完成',
     ...Object.fromEntries(Object.entries(row).map(([key, value]) => [key, String(value ?? '')])),
   }))
@@ -388,7 +401,8 @@ const selectedRawFields = () =>
   columnSettings.value
     .filter((item) => item.visible)
     .map((item) => item.key)
-    .filter((key) => !['rawAddress', 'address', 'scene', 'scene_code', 'result'].includes(key))
+    .filter((key) => key.startsWith('new_') && !['new_address', 'new_scene'].includes(key))
+    .map((key) => key.replace(/^new_/, ''))
 
 const formatDuration = (totalSeconds: number) => {
   const hours = Math.floor(totalSeconds / 3600)
@@ -401,24 +415,38 @@ const setProgress = (
   processed: number,
   total: number,
   elapsedSeconds?: number,
-  phase: 'splitting' | 'summary' | 'done' = 'splitting',
+  phase: 'parsing' | 'splitting' | 'summary' | 'done' | 'cancelled' | 'error' = 'splitting',
+  message = '',
 ) => {
   const safeTotal = Math.max(total, 1)
   const safeProcessed = Math.min(Math.max(processed, 0), safeTotal)
   const splitDone = safeProcessed >= safeTotal
+  const parsing = phase === 'parsing'
   const summaryDoing = phase === 'summary'
   const done = phase === 'done'
+  const cancelled = phase === 'cancelled'
+  const failed = phase === 'error'
   progress.value = {
     percent: Math.round((safeProcessed / safeTotal) * 100),
     summary: {
-      processed: `已处理 ${safeProcessed.toLocaleString()} / ${safeTotal.toLocaleString()} 条`,
-      elapsed: `耗时 ${formatDuration(elapsedSeconds ?? Math.floor((Date.now() - progressStartedAt) / 1000))}`,
+      processed: cancelled
+        ? `已中断，保留 ${safeProcessed.toLocaleString()} / ${safeTotal.toLocaleString()} 条`
+        : failed
+        ? '拆分失败'
+        : parsing
+          ? '正在解析 Excel 文件'
+          : `已处理 ${safeProcessed.toLocaleString()} / ${safeTotal.toLocaleString()} 条`,
+      elapsed: cancelled
+        ? (message || `耗时 ${formatDuration(elapsedSeconds ?? Math.floor((Date.now() - progressStartedAt) / 1000))}`)
+        : failed
+        ? (message || '请检查文件或稍后重试')
+        : message || `耗时 ${formatDuration(elapsedSeconds ?? Math.floor((Date.now() - progressStartedAt) / 1000))}`,
     },
     steps: [
-      { key: 'parse', label: '文件解析', status: safeProcessed > 0 || splitDone ? 'done' : 'doing', text: safeProcessed > 0 || splitDone ? '已完成' : '处理中' },
-      { key: 'split', label: '地址识别与拆分', status: splitDone ? 'done' : 'doing', text: splitDone ? '已完成' : '处理中' },
-      { key: 'summary', label: '结果汇总', status: done ? 'done' : summaryDoing ? 'doing' : 'waiting', text: done ? '已完成' : summaryDoing ? '汇总中' : '等待中' },
-      { key: 'done', label: '完成', status: done ? 'done' : 'waiting', text: done ? '已完成' : '等待中' },
+      { key: 'parse', label: '文件解析', status: parsing ? 'doing' : failed ? 'waiting' : 'done', text: parsing ? '处理中' : failed ? '未完成' : '已完成' },
+      { key: 'split', label: '地址识别与拆分', status: cancelled ? 'interrupted' : failed ? 'waiting' : parsing ? 'waiting' : splitDone ? 'done' : 'doing', text: cancelled ? '拆分中断' : failed ? '未完成' : parsing ? '等待中' : splitDone ? '已完成' : '处理中' },
+      { key: 'summary', label: '结果汇总', status: done || cancelled ? 'done' : summaryDoing ? 'doing' : 'waiting', text: done || cancelled ? '已完成' : summaryDoing ? '汇总中' : '等待中' },
+      { key: 'done', label: '完成', status: done || cancelled ? 'done' : 'waiting', text: done ? '已完成' : cancelled ? '已保留结果' : '等待中' },
     ],
   }
   persistSplitState()
@@ -434,6 +462,9 @@ const persistSplitState = () => {
     downloadUrl: downloadUrl.value,
     resultColumns: resultColumns.value,
     previewRows: previewRows.value,
+    currentJobId: currentJobId.value,
+    isProcessing: isProcessing.value,
+    progressTargetRows,
     savedAt: Date.now(),
   }
   sessionStorage.setItem(SPLIT_STATE_KEY, JSON.stringify(payload))
@@ -466,6 +497,9 @@ const restoreSplitState = () => {
     downloadUrl.value = payload.downloadUrl ?? ''
     resultColumns.value = Array.isArray(payload.resultColumns) ? payload.resultColumns : []
     previewRows.value = Array.isArray(payload.previewRows) ? payload.previewRows : previewRows.value
+    currentJobId.value = payload.currentJobId ?? ''
+    progressTargetRows = Number(payload.progressTargetRows) || progressTargetRows
+    isProcessing.value = Boolean(payload.isProcessing && currentJobId.value && !payload.downloadUrl)
   } catch {
     sessionStorage.removeItem(SPLIT_STATE_KEY)
   }
@@ -476,25 +510,76 @@ const stopProgressTimer = () => {
     window.clearInterval(progressTimer)
     progressTimer = undefined
   }
+  if (progressSocket !== undefined) {
+    progressSocket.close()
+    progressSocket = undefined
+  }
 }
 
-const startProgressTimer = (targetRows: number) => {
+const startProgressSocket = (jobId: string, targetRows: number) => {
   stopProgressTimer()
   progressTargetRows = Math.max(targetRows, 1)
-  progressSummaryStarted = false
   progressStartedAt = Date.now()
-  setProgress(0, progressTargetRows, 0)
+  setProgress(0, progressTargetRows, 0, 'parsing')
+  progressSocket = connectSplitProgress(jobId, {
+    onMessage: applyProgressEvent,
+    onError: () => {
+      if (isProcessing.value) {
+        setProgress(0, progressTargetRows, undefined, 'parsing', '进度通道连接异常，等待接口返回结果')
+      }
+    },
+  })
+}
 
-  progressTimer = window.setInterval(() => {
-    const elapsed = Math.floor((Date.now() - progressStartedAt) / 1000)
-    const paceSeconds = Math.max(3, Math.min(30, Math.ceil(progressTargetRows / 30)))
-    const rawProcessed = Math.floor(progressTargetRows * Math.min(1, (elapsed + 1) / paceSeconds))
-    const processed = Math.min(progressTargetRows, rawProcessed)
-    if (processed >= progressTargetRows) {
-      progressSummaryStarted = true
+const reconnectProgressSocket = (jobId: string) => {
+  if (!jobId) {
+    return
+  }
+  if (progressSocket !== undefined) {
+    progressSocket.close()
+  }
+  progressSocket = connectSplitProgress(jobId, {
+    onMessage: applyProgressEvent,
+    onError: () => {
+      if (isProcessing.value) {
+        progress.value.summary.elapsed = '进度通道连接异常，正在等待后端任务状态'
+      }
+    },
+  })
+}
+
+const applyProgressEvent = (event: SplitProgressEvent) => {
+  const total = event.total_rows || progressTargetRows || 1
+  setProgress(
+    event.processed_rows,
+    total,
+    event.elapsed_seconds,
+    event.phase,
+    event.phase === 'error' ? event.message : '',
+  )
+  if (event.phase === 'done' || event.phase === 'cancelled') {
+    void loadCompletedJob(event.cached_job_id || event.job_id, event.phase)
+  }
+}
+
+const loadCompletedJob = async (jobId: string, finalPhase: 'done' | 'cancelled' = 'done') => {
+  try {
+    const detail = await getSplitResultDetail(jobId, { page: 1, pageSize: 20 })
+    const response: SplitJobResponse = {
+      job_id: jobId,
+      status: finalPhase === 'cancelled' ? 'cancelled' : 'completed',
+      column_mode: detail.columnMode,
+      scene_field: detail.sceneField,
+      total_rows: Number(detail.stats.total.replace(/,/g, '')) || detail.totalRows,
+      processed_rows: detail.totalRows,
+      columns: detail.columns,
+      preview: detail.rows,
+      download_url: detail.downloadUrl,
     }
-    setProgress(processed, progressTargetRows, elapsed, progressSummaryStarted ? 'summary' : 'splitting')
-  }, 500)
+    applySplitResult(response)
+  } catch {
+    // The long HTTP request may still apply the final result; keep progress visible.
+  }
 }
 
 const applySplitResult = (response: SplitJobResponse) => {
@@ -504,8 +589,32 @@ const applySplitResult = (response: SplitJobResponse) => {
   resultColumns.value = response.columns
   downloadUrl.value = buildDownloadUrl(response.download_url)
   jobSummary.value = `共 ${response.total_rows.toLocaleString()} 条，当前处理 ${response.processed_rows.toLocaleString()} 条，结果列方案：${response.column_mode}`
-  setProgress(response.processed_rows, Math.max(response.processed_rows, progressTargetRows, 1), elapsed, 'done')
+  setProgress(
+    response.processed_rows,
+    Math.max(response.processed_rows, progressTargetRows, 1),
+    elapsed,
+    response.status === 'cancelled' ? 'cancelled' : 'done',
+    response.status === 'cancelled' ? '已结束拆分，已保留当前结果' : '',
+  )
+  currentJobId.value = ''
+  isProcessing.value = false
+  isCancelling.value = false
   persistSplitState()
+}
+
+const cancelCurrentSplit = async () => {
+  if (!currentJobId.value) {
+    return
+  }
+  isCancelling.value = true
+  progress.value.summary.elapsed = '正在结束拆分，后端会保留已完成结果'
+  persistSplitState()
+  try {
+    await cancelSplitJob(currentJobId.value)
+  } catch (error) {
+    errorMessage.value = error instanceof Error ? error.message : '结束拆分失败'
+    isCancelling.value = false
+  }
 }
 
 const openSplitConfirm = async () => {
@@ -563,7 +672,9 @@ const confirmSplitCount = () => {
 const startSplit = async (sampleSize: number) => {
   errorMessage.value = ''
   isProcessing.value = true
-  startProgressTimer(sampleSize)
+  const clientJobId = createSplitJobId()
+  currentJobId.value = clientJobId
+  startProgressSocket(clientJobId, sampleSize)
 
   try {
     if (activeTab.value === 'manual') {
@@ -573,6 +684,7 @@ const startSplit = async (sampleSize: number) => {
         sceneField: sceneField.value,
         rawFields: selectedRawFields(),
         sampleSize,
+        clientJobId,
       })
       applySplitResult(response)
       return
@@ -587,13 +699,16 @@ const startSplit = async (sampleSize: number) => {
       sceneField: sceneField.value,
       sampleSize,
       rawFields: selectedRawFields(),
+      clientJobId,
     })
     applySplitResult(response)
   } catch (error) {
     stopProgressTimer()
     errorMessage.value = error instanceof Error ? error.message : '拆分失败，请稍后重试'
   } finally {
-    isProcessing.value = false
+    if (!downloadUrl.value) {
+      isProcessing.value = false
+    }
   }
 }
 
@@ -680,6 +795,9 @@ onMounted(async () => {
   columnMode.value = route.query.columns === 'raw' ? 'raw' : route.query.columns === 'level11' ? 'level11' : 'level8'
   showColumnModal.value = route.query.modal === 'columns'
   restoreSplitState()
+  if (isProcessing.value && currentJobId.value) {
+    reconnectProgressSocket(currentJobId.value)
+  }
   window.setTimeout(() => {
     isRestoringSplitState = false
   }, 0)
@@ -899,6 +1017,11 @@ onBeforeUnmount(stopProgressTimer)
   animation: progress-pulse 0.9s linear infinite;
 }
 
+.step-dot.interrupted {
+  background: #f59e0b;
+  border-color: #f59e0b;
+}
+
 .step-status {
   color: var(--text-muted);
   font-weight: 600;
@@ -910,6 +1033,10 @@ onBeforeUnmount(stopProgressTimer)
 
 .step-status.is-done {
   color: var(--success);
+}
+
+.step-status.is-interrupted {
+  color: #d97706;
 }
 
 @keyframes progress-pulse {
@@ -970,6 +1097,26 @@ onBeforeUnmount(stopProgressTimer)
   color: #94a3b8;
   border-color: var(--border);
   background: #f8fafc;
+}
+
+.danger-button {
+  min-height: 44px;
+  padding: 0 18px;
+  border-radius: 10px;
+  color: #b91c1c;
+  border: 1px solid #fecaca;
+  background: #fff5f5;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.danger-button:disabled {
+  cursor: not-allowed;
+  opacity: 0.65;
+}
+
+.split-stop-button {
+  margin-left: 12px;
 }
 
 .split-count-modal {

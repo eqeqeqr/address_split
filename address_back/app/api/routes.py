@@ -1,7 +1,9 @@
 from pathlib import Path
+import asyncio
 import json
+import uuid
 
-from fastapi import APIRouter, File, Form, HTTPException, Query, UploadFile
+from fastapi import APIRouter, File, Form, HTTPException, Query, UploadFile, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse
 
 from app.core.config import DEFAULT_SAMPLE_SIZE, UPLOAD_DIR
@@ -37,10 +39,13 @@ from app.services.split_service import (
     inspect_excel_file,
     list_jobs,
     read_result_rows,
+    should_cancel_job,
     split_addresses,
     split_excel_file,
 )
 from app.services.job_store import build_cache_key
+from app.services.progress_ws import progress_manager
+from app.services.task_control import request_cancel
 
 router = APIRouter(prefix="/api")
 
@@ -60,9 +65,36 @@ def _parse_raw_fields(raw_fields: str | None) -> list[str] | None:
     return value
 
 
+def _split_scheme(column_mode: ColumnMode, raw_fields: list[str] | None = None) -> str:
+    if column_mode == ColumnMode.level8:
+        return "8级标准列"
+    if column_mode == ColumnMode.level11:
+        return "11级标准列"
+    if raw_fields:
+        return f"原始字段自定义({','.join(raw_fields)})"
+    return "原始字段自定义"
+
+
+def _publish_from_worker(loop: asyncio.AbstractEventLoop, job_id: str):
+    def publish(payload: dict) -> None:
+        asyncio.run_coroutine_threadsafe(progress_manager.publish(job_id, payload), loop)
+
+    return publish
+
+
 @router.get("/health")
 def health() -> dict[str, str]:
     return {"status": "ok"}
+
+
+@router.websocket("/ws/splits/{job_id}")
+async def split_progress_ws(websocket: WebSocket, job_id: str) -> None:
+    await progress_manager.connect(job_id, websocket)
+    try:
+        while True:
+            await websocket.receive_text()
+    except WebSocketDisconnect:
+        await progress_manager.disconnect(job_id, websocket)
 
 
 @router.get("/schemas", response_model=ColumnSchemaResponse)
@@ -172,6 +204,7 @@ async def create_split(
     scene_field: str | None = Form(None),
     sample_size: int = Form(DEFAULT_SAMPLE_SIZE),
     raw_fields: str | None = Form(None),
+    client_job_id: str | None = Form(None),
 ) -> SplitJobResponse:
     if sample_size <= 0:
         raise HTTPException(status_code=400, detail="sample_size 必须大于 0")
@@ -181,10 +214,24 @@ async def create_split(
         raise HTTPException(status_code=400, detail="仅支持 .xlsx 或 .xls 文件")
 
     filename = file.filename or "upload.xlsx"
-    cache_key = build_cache_key(filename, sample_size)
+    parsed_raw_fields = _parse_raw_fields(raw_fields)
+    job_id = client_job_id or uuid.uuid4().hex
+    loop = asyncio.get_running_loop()
+    cache_key = build_cache_key(filename, sample_size, _split_scheme(column_mode, parsed_raw_fields))
     cached_job = get_cached_job(cache_key)
     if cached_job is not None:
         preview_rows, _ = read_result_rows(cached_job, page=1, page_size=20)
+        await progress_manager.publish(
+            job_id,
+            {
+                "phase": "done",
+                "processed_rows": cached_job.processed_rows,
+                "total_rows": max(cached_job.processed_rows, 1),
+                "elapsed_seconds": 0,
+                "message": "命中缓存，已加载拆分结果",
+                "cached_job_id": cached_job.job_id,
+            },
+        )
         return SplitJobResponse(
             job_id=cached_job.job_id,
             status=cached_job.status,
@@ -201,22 +248,28 @@ async def create_split(
     upload_path.write_bytes(await file.read())
 
     try:
-        job_id, result_df, detail = split_excel_file(
+        result_job_id, result_df, detail = await asyncio.to_thread(
+            split_excel_file,
             upload_path,
             column_mode,
             scene_field,
             sample_size,
-            _parse_raw_fields(raw_fields),
+            parsed_raw_fields,
             filename,
             cache_key,
+            job_id,
+            _publish_from_worker(loop, job_id),
+            lambda: should_cancel_job(job_id),
         )
     except ValueError as exc:
+        await progress_manager.publish(job_id, {"phase": "error", "processed_rows": 0, "total_rows": sample_size, "elapsed_seconds": 0, "message": str(exc)})
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except Exception as exc:
+        await progress_manager.publish(job_id, {"phase": "error", "processed_rows": 0, "total_rows": sample_size, "elapsed_seconds": 0, "message": f"地址拆分失败：{exc}"})
         raise HTTPException(status_code=500, detail=f"地址拆分失败：{exc}") from exc
 
     return SplitJobResponse(
-        job_id=job_id,
+        job_id=result_job_id,
         status=detail.status,
         column_mode=detail.column_mode,
         scene_field=detail.scene_field,
@@ -243,6 +296,7 @@ def list_splits() -> list[SplitRecordResponse]:
                 status="success" if job.status.value == "completed" else "partial",
                 startedAt=job.created_at,
                 columnMode=job.column_mode,
+                splitScheme=_split_scheme(job.column_mode, job.raw_fields),
                 sceneField=job.scene_field,
                 downloadUrl=f"/api/splits/{job.job_id}/download",
             )
@@ -252,17 +306,25 @@ def list_splits() -> list[SplitRecordResponse]:
 
 
 @router.post("/splits/text", response_model=SplitJobResponse)
-def create_text_split(payload: AddressSplitRequest) -> SplitJobResponse:
+async def create_text_split(payload: AddressSplitRequest) -> SplitJobResponse:
+    job_id = payload.client_job_id or uuid.uuid4().hex
+    loop = asyncio.get_running_loop()
     try:
-        job_id, result_df, detail = split_addresses(
+        job_id, result_df, detail = await asyncio.to_thread(
+            split_addresses,
             payload.addresses,
             payload.column_mode,
             payload.scene_field,
             payload.raw_fields,
+            job_id,
+            _publish_from_worker(loop, job_id),
+            lambda: should_cancel_job(job_id),
         )
     except ValueError as exc:
+        await progress_manager.publish(job_id, {"phase": "error", "processed_rows": 0, "total_rows": len(payload.addresses), "elapsed_seconds": 0, "message": str(exc)})
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except Exception as exc:
+        await progress_manager.publish(job_id, {"phase": "error", "processed_rows": 0, "total_rows": len(payload.addresses), "elapsed_seconds": 0, "message": f"地址拆分失败：{exc}"})
         raise HTTPException(status_code=500, detail=f"地址拆分失败：{exc}") from exc
 
     return SplitJobResponse(
@@ -284,6 +346,12 @@ def get_split(job_id: str):
     if job is None:
         raise HTTPException(status_code=404, detail="任务不存在")
     return job
+
+
+@router.post("/splits/{job_id}/cancel")
+def cancel_split(job_id: str) -> dict[str, bool]:
+    request_cancel(job_id)
+    return {"cancelled": True}
 
 
 @router.get("/splits/{job_id}/result", response_model=SplitResultDetailResponse)

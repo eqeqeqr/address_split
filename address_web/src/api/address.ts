@@ -34,6 +34,16 @@ export interface SplitJobResponse {
   download_url: string
 }
 
+export interface SplitProgressEvent {
+  job_id: string
+  phase: 'parsing' | 'splitting' | 'summary' | 'done' | 'cancelled' | 'error'
+  processed_rows: number
+  total_rows: number
+  elapsed_seconds: number
+  message?: string
+  cached_job_id?: string
+}
+
 export interface SplitResultDetailResponse {
   stats: {
     total: string
@@ -98,13 +108,16 @@ export const buildDownloadUrl = (downloadUrl: string) => {
 
 export const uploadAddressFile = async (
   file: File,
-  payload: { columnMode: ColumnMode; sceneField: string; sampleSize?: number; rawFields?: string[] },
+  payload: { columnMode: ColumnMode; sceneField: string; sampleSize?: number; rawFields?: string[]; clientJobId?: string },
 ) => {
   const formData = new FormData()
   formData.append('file', file)
   formData.append('column_mode', payload.columnMode)
   formData.append('scene_field', payload.sceneField)
   formData.append('sample_size', String(payload.sampleSize ?? 100))
+  if (payload.clientJobId) {
+    formData.append('client_job_id', payload.clientJobId)
+  }
   if (payload.columnMode === 'raw' && payload.rawFields) {
     formData.append('raw_fields', JSON.stringify(payload.rawFields))
   }
@@ -131,6 +144,7 @@ export const submitManualAddress = async (payload: {
   sceneField: string
   rawFields?: string[]
   sampleSize?: number
+  clientJobId?: string
 }) => {
   const addresses = payload.content
     .split('\n')
@@ -146,8 +160,41 @@ export const submitManualAddress = async (payload: {
       column_mode: payload.columnMode,
       scene_field: payload.sceneField,
       raw_fields: payload.columnMode === 'raw' ? payload.rawFields : undefined,
+      client_job_id: payload.clientJobId,
     }),
   })
+}
+
+export const createSplitJobId = () => {
+  if (typeof crypto !== 'undefined' && 'randomUUID' in crypto) {
+    return crypto.randomUUID().replace(/-/g, '')
+  }
+
+  return `${Date.now()}${Math.random().toString(16).slice(2)}`
+}
+
+export const connectSplitProgress = (
+  jobId: string,
+  handlers: {
+    onMessage: (event: SplitProgressEvent) => void
+    onError?: () => void
+    onClose?: () => void
+  },
+) => {
+  const base = API_BASE_URL.replace(/^http/, 'ws').replace(/\/api$/, '')
+  const socket = new WebSocket(`${base}/api/ws/splits/${jobId}`)
+
+  socket.addEventListener('message', (event) => {
+    try {
+      handlers.onMessage(JSON.parse(event.data) as SplitProgressEvent)
+    } catch {
+      // Ignore malformed progress frames; the final HTTP response still applies.
+    }
+  })
+  socket.addEventListener('error', () => handlers.onError?.())
+  socket.addEventListener('close', () => handlers.onClose?.())
+
+  return socket
 }
 
 export const getSplitProgress = async (_taskId?: string) => {
@@ -220,12 +267,18 @@ const mapRecord = (item: any): SplitRecord => ({
   startedAt: item.startedAt,
   downloadUrl: buildDownloadUrl(item.downloadUrl),
   columnMode: item.columnMode,
+  splitScheme: item.splitScheme,
   sceneField: item.sceneField,
 })
 
 export const deleteSplitRecord = async (id: string) =>
   requestJson<{ deleted: boolean }>(`/splits/${id}`, {
     method: 'DELETE',
+  })
+
+export const cancelSplitJob = async (id: string) =>
+  requestJson<{ cancelled: boolean }>(`/splits/${id}/cancel`, {
+    method: 'POST',
   })
 
 export const downloadSplitRecord = (downloadUrl: string) => buildDownloadUrl(downloadUrl)

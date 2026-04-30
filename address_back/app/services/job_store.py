@@ -101,5 +101,5 @@ def read_cached_rows(job_id: str, page: int = 1, page_size: int = 200) -> tuple[
     return redis_store.read_rows(job_id, page, page_size)
 
 
-def build_cache_key(filename: str, sample_size: int) -> str:
-    return redis_store.build_cache_key(filename, sample_size)
+def build_cache_key(filename: str, sample_size: int, scheme: str = "") -> str:
+    return redis_store.build_cache_key(filename, sample_size, scheme)

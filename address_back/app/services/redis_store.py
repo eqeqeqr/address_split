@@ -64,9 +64,10 @@ def redis_available() -> bool:
         return False
 
 
-def build_cache_key(filename: str, sample_size: int) -> str:
+def build_cache_key(filename: str, sample_size: int, scheme: str = "") -> str:
     safe_name = filename.strip().replace("\\", "_").replace("/", "_") or "upload.xlsx"
-    return f"{CACHE_PREFIX}{safe_name}:{sample_size}"
+    safe_scheme = scheme.strip().replace("\\", "_").replace("/", "_").replace(":", "_") or "default"
+    return f"{CACHE_PREFIX}{safe_name}:{sample_size}:{safe_scheme}"
 
 
 def save_job(job: SplitJobDetail, rows: list[dict[str, Any]] | None = None) -> None:

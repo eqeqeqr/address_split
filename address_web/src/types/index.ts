@@ -25,7 +25,7 @@ export type ColumnMode = 'level8' | 'level11' | 'raw'
 export interface ProgressStep {
   key: string
   label: string
-  status: 'done' | 'doing' | 'waiting'
+  status: 'done' | 'doing' | 'waiting' | 'interrupted'
   text: string
 }
 
@@ -40,6 +40,7 @@ export interface SplitRecord {
   startedAt: string
   downloadUrl?: string
   columnMode?: ColumnMode
+  splitScheme?: string
   sceneField?: string
 }
 

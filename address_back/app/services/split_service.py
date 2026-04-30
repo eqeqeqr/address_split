@@ -3,7 +3,8 @@ from __future__ import annotations
 import uuid
 from datetime import datetime
 from pathlib import Path
-from typing import Any
+from time import monotonic
+from typing import Any, Callable
 
 import pandas as pd
 
@@ -24,6 +25,10 @@ from app.services.job_store import get_job as get_stored_job
 from app.services.job_store import list_jobs as list_stored_jobs
 from app.services.job_store import read_cached_rows
 from app.services.job_store import save_job
+from app.services.task_control import clear_cancel, is_cancelled
+
+ProgressCallback = Callable[[dict[str, Any]], None]
+CancelCheck = Callable[[], bool]
 
 
 def _normalize_excel_value(value: Any) -> str:
@@ -41,7 +46,7 @@ def _resolve_address_column(df: pd.DataFrame) -> str:
     raise ValueError("表格不符合规范，需要添加表头 address/地址")
 
 
-def _read_excel(path: Path, sample_size: int) -> tuple[pd.DataFrame, int]:
+def _read_excel(path: Path, sample_size: int) -> tuple[pd.DataFrame, int, str]:
     df = pd.read_excel(path)
     address_column = _resolve_address_column(df)
     df = df[df[address_column].notna()]
@@ -53,10 +58,7 @@ def _read_excel(path: Path, sample_size: int) -> tuple[pd.DataFrame, int]:
     if total_rows > sample_size:
         df = df.sample(n=sample_size, random_state=20260427).sort_index()
 
-    if address_column != "address":
-        df = df.rename(columns={address_column: "address"})
-
-    return df.reset_index(drop=True), total_rows
+    return df.reset_index(drop=True), total_rows, address_column
 
 
 def inspect_excel_file(path: Path) -> dict[str, Any]:
@@ -97,15 +99,6 @@ def _resolve_scene_field(column_mode: ColumnMode, scene_field: str | None) -> st
     return scene_field
 
 
-def _result_columns(original_columns: list[str], column_mode: ColumnMode) -> list[str]:
-    original_tail = [column for column in original_columns if column != "address"]
-    if column_mode == ColumnMode.level8:
-        return ["address", *LEVEL8_FIELDS, "scene_code", "scene", *original_tail]
-    if column_mode == ColumnMode.level11:
-        return ["address", *LEVEL11_FIELDS, "scene_code", "scene", *original_tail]
-    return ["address", *RAW_FIELDS, "scene_code", "scene", *original_tail]
-
-
 def _resolve_raw_fields(column_mode: ColumnMode, raw_fields: list[str] | None) -> list[str]:
     if column_mode != ColumnMode.raw:
         return []
@@ -120,18 +113,23 @@ def _resolve_raw_fields(column_mode: ColumnMode, raw_fields: list[str] | None) -
     return raw_fields
 
 
+def _generated_columns_for_mode(column_mode: ColumnMode, raw_fields: list[str] | None) -> list[str]:
+    if column_mode == ColumnMode.level8:
+        split_fields = LEVEL8_FIELDS
+    elif column_mode == ColumnMode.level11:
+        split_fields = LEVEL11_FIELDS
+    else:
+        split_fields = _resolve_raw_fields(column_mode, raw_fields)
+
+    return ["new_address", *[f"new_{field}" for field in split_fields], "new_scene"]
+
+
 def _result_columns_for_mode(
     original_columns: list[str],
     column_mode: ColumnMode,
     raw_fields: list[str] | None,
 ) -> list[str]:
-    original_tail = [column for column in original_columns if column != "address"]
-    if column_mode == ColumnMode.level8:
-        return ["address", *LEVEL8_FIELDS, "scene_code", "scene", *original_tail]
-    if column_mode == ColumnMode.level11:
-        return ["address", *LEVEL11_FIELDS, "scene_code", "scene", *original_tail]
-
-    return ["address", *_resolve_raw_fields(column_mode, raw_fields), "scene_code", "scene", *original_tail]
+    return [*original_columns, *_generated_columns_for_mode(column_mode, raw_fields)]
 
 
 def split_dataframe(
@@ -143,43 +141,69 @@ def split_dataframe(
     task_name: str = "",
     source: str = "",
     cache_key: str | None = None,
+    address_column: str = "address",
+    job_id: str | None = None,
+    progress_callback: ProgressCallback | None = None,
+    should_cancel: CancelCheck | None = None,
 ) -> tuple[str, pd.DataFrame, SplitJobDetail]:
-    job_id = uuid.uuid4().hex
+    job_id = job_id or uuid.uuid4().hex
     resolved_scene_field = _resolve_scene_field(column_mode, scene_field)
     resolved_raw_fields = _resolve_raw_fields(column_mode, raw_fields)
     model = get_model_service()
 
     rows: list[dict[str, Any]] = []
     original_columns = list(df.columns)
+    process_total = len(df)
+    started_at = monotonic()
 
-    for _, record in df.iterrows():
-        address = _normalize_excel_value(record["address"])
+    def emit_progress(phase: str, processed_rows: int, message: str = "") -> None:
+        if progress_callback is None:
+            return
+        progress_callback(
+            {
+                "phase": phase,
+                "processed_rows": processed_rows,
+                "total_rows": process_total,
+                "elapsed_seconds": int(monotonic() - started_at),
+                "message": message,
+            }
+        )
+
+    cancelled = False
+    emit_progress("splitting", 0, "开始地址识别与拆分")
+    for index, record in enumerate(df.itertuples(index=False), start=1):
+        if should_cancel and should_cancel():
+            cancelled = True
+            break
+
+        record_data = dict(zip(original_columns, record, strict=False))
+        address = _normalize_excel_value(record_data[address_column])
         raw = model.parse(address)
         levels = _raw_to_levels(raw)
         scene_source = levels.get(resolved_scene_field, "") if column_mode != ColumnMode.raw else raw.get(resolved_scene_field, "")
         scene = detect_scene(scene_source)
 
-        row: dict[str, Any] = {"address": address}
+        row: dict[str, Any] = {column: _normalize_excel_value(record_data[column]) for column in original_columns}
+        row["new_address"] = address
         if column_mode == ColumnMode.level8:
-            row.update({field: levels.get(field, "") for field in LEVEL8_FIELDS})
+            row.update({f"new_{field}": levels.get(field, "") for field in LEVEL8_FIELDS})
         elif column_mode == ColumnMode.level11:
-            row.update({field: levels.get(field, "") for field in LEVEL11_FIELDS})
+            row.update({f"new_{field}": levels.get(field, "") for field in LEVEL11_FIELDS})
         else:
-            row.update({field: raw.get(field, "") for field in resolved_raw_fields})
+            row.update({f"new_{field}": raw.get(field, "") for field in resolved_raw_fields})
 
-        row.update(scene)
-        for column in original_columns:
-            if column != "address":
-                row[column] = _normalize_excel_value(record[column])
+        row["new_scene"] = scene.get("scene", "")
         rows.append(row)
+        emit_progress("splitting", index, "地址识别与拆分中")
 
+    emit_progress("summary", len(rows), "正在汇总当前结果" if cancelled else "正在汇总结果")
     result_df = pd.DataFrame(rows, columns=_result_columns_for_mode(original_columns, column_mode, resolved_raw_fields))
     result_file = RESULT_DIR / f"{job_id}.xlsx"
     result_df.to_excel(result_file, index=False)
 
     detail = SplitJobDetail(
         job_id=job_id,
-        status=SplitJobStatus.completed,
+        status=SplitJobStatus.cancelled if cancelled else SplitJobStatus.completed,
         column_mode=column_mode,
         scene_field=resolved_scene_field,
         total_rows=total_rows,
@@ -195,6 +219,8 @@ def split_dataframe(
         cache_key=cache_key,
     )
     save_job(detail, result_df.fillna("").to_dict(orient="records"))
+    emit_progress("cancelled" if cancelled else "done", len(result_df), "已结束拆分，已保留当前结果" if cancelled else "拆分完成")
+    clear_cancel(job_id)
     return job_id, result_df, detail
 
 
@@ -206,8 +232,21 @@ def split_excel_file(
     raw_fields: list[str] | None = None,
     task_name: str = "",
     cache_key: str | None = None,
+    job_id: str | None = None,
+    progress_callback: ProgressCallback | None = None,
+    should_cancel: CancelCheck | None = None,
 ) -> tuple[str, pd.DataFrame, SplitJobDetail]:
-    df, total_rows = _read_excel(path, sample_size)
+    if progress_callback is not None:
+        progress_callback(
+            {
+                "phase": "parsing",
+                "processed_rows": 0,
+                "total_rows": sample_size,
+                "elapsed_seconds": 0,
+                "message": "正在解析 Excel 文件",
+            }
+        )
+    df, total_rows, address_column = _read_excel(path, sample_size)
     return split_dataframe(
         df,
         total_rows,
@@ -217,6 +256,10 @@ def split_excel_file(
         task_name=task_name or path.name,
         source="Excel上传",
         cache_key=cache_key,
+        address_column=address_column,
+        job_id=job_id,
+        progress_callback=progress_callback,
+        should_cancel=should_cancel,
     )
 
 
@@ -225,6 +268,9 @@ def split_addresses(
     column_mode: ColumnMode,
     scene_field: str | None = None,
     raw_fields: list[str] | None = None,
+    job_id: str | None = None,
+    progress_callback: ProgressCallback | None = None,
+    should_cancel: CancelCheck | None = None,
 ) -> tuple[str, pd.DataFrame, SplitJobDetail]:
     df = pd.DataFrame({"address": addresses})
     return split_dataframe(
@@ -235,7 +281,14 @@ def split_addresses(
         raw_fields,
         task_name=f"手动输入_{datetime.now().strftime('%Y%m%d_%H%M%S')}",
         source="手动输入",
+        job_id=job_id,
+        progress_callback=progress_callback,
+        should_cancel=should_cancel,
     )
+
+
+def should_cancel_job(job_id: str) -> bool:
+    return is_cancelled(job_id)
 
 
 def get_job(job_id: str) -> SplitJobDetail | None:
