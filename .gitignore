@@ -21,6 +21,7 @@ build/
 Thumbs.db
 
 # Runtime data
+README.md
 tmp_verify/
 excel/
 pdf/
